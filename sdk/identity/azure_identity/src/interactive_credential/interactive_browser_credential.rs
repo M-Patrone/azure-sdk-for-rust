@@ -1,7 +1,6 @@
 use super::internal_server::*;
 use crate::authorization_code_flow;
 use azure_core::{
-    date::iso8601::option,
     error::ErrorKind,
     http::{new_http_client, Url},
     Error,
@@ -76,7 +75,7 @@ impl InteractiveBrowserCredential {
         scopes: Option<&[&str]>,
     ) -> azure_core::Result<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>> {
         let scopes = scopes.unwrap_or(&DEFAULT_SCOPE_ARR);
-        let options = self.options;
+        let options = self.options.clone();
 
         let authorization_code_flow = authorization_code_flow::authorize(
             options.client_id.unwrap().clone(),

@@ -1,5 +1,6 @@
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
+use std::process::Output;
 use std::time::Duration;
 use tracing::{error, info};
 
@@ -12,9 +13,18 @@ pub const LOCAL_SERVER_PORT: u16 = 47828;
 #[allow(dead_code)]
 #[cfg(target_os = "windows")]
 pub async fn open_url(url: &str) -> Option<String> {
-    use async_process::Command;
-    let spawned = Command::new("cmd").args(["/C", "explorer", url]).spawn();
-    handle_browser_command(spawned)
+    use azure_core::process::{new_executor, Executor};
+    use std::{ffi::OsStr, sync::Arc};
+
+    let executor: Arc<dyn Executor> = new_executor();
+
+    let command_ostr = OsStr::new("/C explorer");
+
+    let args: &[&OsStr] = &[OsStr::new(url)];
+
+    let spawned = executor.run(command_ostr, args).await;
+
+    return handle_browser_command(spawned);
 }
 
 /// Opens the given URL in the default system browser and starts a local web server
@@ -22,9 +32,18 @@ pub async fn open_url(url: &str) -> Option<String> {
 #[allow(dead_code)]
 #[cfg(target_os = "macos")]
 pub async fn open_url(url: &str) -> Option<String> {
-    use async_process::Command;
-    let spawned = Command::new("open").arg(url).spawn();
-    handle_browser_command(spawned)
+    use azure_core::process::{new_executor, Executor};
+    use std::{ffi::OsStr, sync::Arc};
+
+    let executor: Arc<dyn Executor> = new_executor();
+
+    let command_ostr = OsStr::new("open");
+
+    let args: &[&OsStr] = &[OsStr::new(url)];
+
+    let spawned = executor.run(command_ostr, args).await;
+
+    return handle_browser_command(spawned);
 }
 
 /// Opens the given URL in the default system browser and starts a local web server
@@ -43,15 +62,7 @@ pub async fn open_url(url: &str) -> Option<String> {
 
         let spawned = executor.run(command_ostr, args).await;
 
-        match spawned {
-            Ok(spawned_ok) => {
-                return handle_browser_command(spawned_ok);
-            }
-            Err(e) => {
-                error!("Error on starting browser: '{e}'");
-                return None;
-            }
-        }
+        return handle_browser_command(spawned);
     }
 
     info!("Open the following link manually in your browser: {url}");
@@ -63,10 +74,16 @@ pub async fn open_url(url: &str) -> Option<String> {
 #[allow(dead_code)]
 #[cfg(target_os = "linux")]
 async fn is_command_available(cmd: &str) -> bool {
-    use async_process::Command;
-    Command::new("which")
-        .arg(cmd)
-        .output()
+    use azure_core::process::{new_executor, Executor};
+    use std::{ffi::OsStr, sync::Arc};
+
+    let executor: Arc<dyn Executor> = new_executor();
+    let command_ostr = OsStr::new("which");
+
+    let args: &[&OsStr] = &[OsStr::new(cmd)];
+
+    executor
+        .run(command_ostr, args)
         .await
         .map(|o| !o.stdout.is_empty())
         .unwrap_or(false)
@@ -96,7 +113,7 @@ async fn find_linux_browser_command() -> Option<String> {
 /// starting the browser if the browser could be started, then the webserver should be started to
 /// get the auth code
 #[allow(dead_code)]
-fn handle_browser_command(result: Result<async_process::Child, io::Error>) -> Option<String> {
+fn handle_browser_command(result: Result<Output, io::Error>) -> Option<String> {
     match result {
         Ok(_) => start_webserver(),
         Err(e) => {
