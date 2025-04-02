@@ -32,11 +32,26 @@ pub async fn open_url(url: &str) -> Option<String> {
 #[allow(dead_code)]
 #[cfg(target_os = "linux")]
 pub async fn open_url(url: &str) -> Option<String> {
-    use async_process::Command;
+    use azure_core::process::{new_executor, Executor};
+    use std::{ffi::OsStr, sync::Arc};
 
+    let executor: Arc<dyn Executor> = new_executor();
     if let Some(command) = find_linux_browser_command().await {
-        let spawned = Command::new(command).arg(url).spawn();
-        return handle_browser_command(spawned);
+        let command_ostr = OsStr::new(&command);
+
+        let args: &[&OsStr] = &[OsStr::new(url)];
+
+        let spawned = executor.run(command_ostr, args).await;
+
+        match spawned {
+            Ok(spawned_ok) => {
+                return handle_browser_command(spawned_ok);
+            }
+            Err(e) => {
+                error!("Error on starting browser: '{e}'");
+                return None;
+            }
+        }
     }
 
     info!("Open the following link manually in your browser: {url}");
@@ -109,7 +124,7 @@ fn handle_tcp_connection(listener: TcpListener) -> Option<String> {
         .ok()
         .and_then(handle_client)
 }
-/// Main method to handle the incomming traffic.
+/// Main method to handle the incoming traffic.
 /// After a 10s timeout the stream will be closed
 /// if the stream could be opened, we read the whole request and try to extract the auth_code
 /// Returns also the html code to show if it worked

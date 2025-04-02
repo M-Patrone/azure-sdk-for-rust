@@ -15,6 +15,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 async fn run_app_inter(subscription_id: String, tenant_id: String) -> Result<(), Box<dyn Error>> {
+    let options = InteractiveBrowserCredentialOptions{None, Some(tenant_id), None};
     let interactive_credentials = InteractiveBrowserCredential::new(None, Some(tenant_id), None)?;
 
     let token_response = interactive_credentials

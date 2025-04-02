@@ -1,6 +1,11 @@
 use super::internal_server::*;
 use crate::authorization_code_flow;
-use azure_core::{error::ErrorKind, http::new_http_client, http::Url, Error};
+use azure_core::{
+    date::iso8601::option,
+    error::ErrorKind,
+    http::{new_http_client, Url},
+    Error,
+};
 use oauth2::{
     basic::BasicTokenType, AuthorizationCode, ClientId, EmptyExtraTokenFields,
     StandardTokenResponse,
@@ -17,38 +22,48 @@ const DEFAULT_DEVELOPER_SIGNON_CLIENT_ID: &str = "04b07795-8ddb-461a-bbee-02f9e1
 #[allow(dead_code)]
 const DEFAULT_ORGANIZATIONS_TENANT_ID: &str = "organizations";
 
+#[derive(Clone)]
+pub struct InteractiveBrowserCredentialOptions {
+    /// Client ID of the application.
+    pub(crate) client_id: Option<ClientId>,
+    /// Tenant ID for the authentication request.
+    pub(crate) tenant_id: Option<String>,
+    /// Redirect URI where the authentication response is sent.
+    pub(crate) redirect_url: Option<Url>,
+}
+
 /// Provides interactive browser-based authentication.
 #[derive(Clone)]
 pub struct InteractiveBrowserCredential {
-    /// Client ID of the application.
-    pub(crate) client_id: ClientId,
-    /// Tenant ID for the authentication request.
-    pub(crate) tenant_id: String,
-    /// Redirect URI where the authentication response is sent.
-    pub(crate) redirect_url: Url,
+    options: InteractiveBrowserCredentialOptions,
 }
 
 impl InteractiveBrowserCredential {
     /// Creates a new `InteractiveBrowserCredential` instance with optional parameters.
-    pub fn new(
-        client_id: Option<ClientId>,
-        tenant_id: Option<String>,
-        redirect_url: Option<Url>,
-    ) -> azure_core::Result<Arc<Self>> {
-        let client_id = client_id
-            .unwrap_or_else(|| ClientId::new(DEFAULT_DEVELOPER_SIGNON_CLIENT_ID.to_owned()));
+    pub fn new(options: InteractiveBrowserCredentialOptions) -> azure_core::Result<Arc<Self>> {
+        let client_id = Some(
+            options
+                .client_id
+                .unwrap_or_else(|| ClientId::new(DEFAULT_DEVELOPER_SIGNON_CLIENT_ID.to_owned())),
+        );
 
-        let tenant_id = tenant_id.unwrap_or_else(|| DEFAULT_ORGANIZATIONS_TENANT_ID.to_owned());
+        let tenant_id = Some(
+            options
+                .tenant_id
+                .unwrap_or_else(|| DEFAULT_ORGANIZATIONS_TENANT_ID.to_owned()),
+        );
 
-        let redirect_url = redirect_url.unwrap_or_else(|| {
+        let redirect_url = Some(options.redirect_url.unwrap_or_else(|| {
             Url::from_str(&format!("http://localhost:{}", LOCAL_SERVER_PORT))
                 .expect("Failed to parse redirect URL")
-        });
+        }));
 
         Ok(Arc::new(Self {
-            client_id,
-            tenant_id,
-            redirect_url,
+            options: InteractiveBrowserCredentialOptions {
+                client_id,
+                tenant_id,
+                redirect_url,
+            },
         }))
     }
 
@@ -61,12 +76,13 @@ impl InteractiveBrowserCredential {
         scopes: Option<&[&str]>,
     ) -> azure_core::Result<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>> {
         let scopes = scopes.unwrap_or(&DEFAULT_SCOPE_ARR);
+        let options = self.options;
 
         let authorization_code_flow = authorization_code_flow::authorize(
-            self.client_id.clone(),
+            options.client_id.unwrap().clone(),
             None,
-            &self.tenant_id,
-            self.redirect_url.clone(),
+            &options.tenant_id.unwrap(),
+            options.redirect_url.unwrap().clone(),
             scopes,
         );
 
@@ -106,8 +122,12 @@ mod tests {
         init_tracing();
         debug!("Starting interactive authentication test");
 
-        let credential = InteractiveBrowserCredential::new(None, None, None)
-            .expect("Failed to create credential");
+        let credential = InteractiveBrowserCredential::new(InteractiveBrowserCredentialOptions {
+            client_id: None,
+            tenant_id: None,
+            redirect_url: None,
+        })
+        .expect("Failed to create credential");
 
         let token_response = credential.get_token(None).await;
         debug!("Authentication result: {:#?}", token_response);
