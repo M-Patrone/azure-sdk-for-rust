@@ -1,16 +1,18 @@
 use super::internal_server::*;
 use crate::authorization_code_flow;
+use azure_core::credentials::TokenCredential;
 use azure_core::{
+    credentials::AccessToken,
     error::ErrorKind,
     http::{new_http_client, Url},
     Error,
 };
+use oauth2::TokenResponse;
 use oauth2::{
     basic::BasicTokenType, AuthorizationCode, ClientId, EmptyExtraTokenFields,
     StandardTokenResponse,
 };
 use std::{str::FromStr, sync::Arc};
-use tracing::debug;
 
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
@@ -26,10 +28,10 @@ const DEFAULT_ORGANIZATIONS_TENANT_ID: &str = "organizations";
 ///
 /// This struct allows customization of the interactive browser authentication flow,
 /// including the client ID, tenant ID, and redirect URL used during the authentication process.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct InteractiveBrowserCredentialOptions {
     /// Client ID of the application.
-    pub client_id: Option<ClientId>,
+    pub client_id: Option<String>,
     /// Tenant ID for the authentication request.
     pub tenant_id: Option<String>,
     /// Redirect URI where the authentication response is sent.
@@ -37,7 +39,7 @@ pub struct InteractiveBrowserCredentialOptions {
 }
 
 /// Provides interactive browser-based authentication.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct InteractiveBrowserCredential {
     options: InteractiveBrowserCredentialOptions,
 }
@@ -48,7 +50,7 @@ impl InteractiveBrowserCredential {
         let client_id = Some(
             options
                 .client_id
-                .unwrap_or_else(|| ClientId::new(DEFAULT_DEVELOPER_SIGNON_CLIENT_ID.to_owned())),
+                .unwrap_or_else(|| DEFAULT_DEVELOPER_SIGNON_CLIENT_ID.to_owned()),
         );
 
         let tenant_id = Some(
@@ -75,15 +77,12 @@ impl InteractiveBrowserCredential {
     ///
     /// If no scopes are provided, default scopes will be used.
     #[allow(dead_code)]
-    pub async fn get_token(
-        &self,
-        scopes: Option<&[&str]>,
-    ) -> azure_core::Result<StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>> {
+    async fn get_access_token(&self, scopes: Option<&[&str]>) -> azure_core::Result<AccessToken> {
         let scopes = scopes.unwrap_or(&DEFAULT_SCOPE_ARR);
         let options = self.options.clone();
 
         let authorization_code_flow = authorization_code_flow::authorize(
-            options.client_id.unwrap().clone(),
+            ClientId::new(options.client_id.unwrap().clone()),
             None,
             &options.tenant_id.unwrap(),
             options.redirect_url.unwrap().clone(),
@@ -93,16 +92,23 @@ impl InteractiveBrowserCredential {
         let auth_code = open_url(authorization_code_flow.authorize_url.as_ref()).await;
 
         match auth_code {
-            Some(code) => {
-                authorization_code_flow
-                    .exchange(new_http_client(), AuthorizationCode::new(code))
-                    .await
-            }
+            Some(code) => authorization_code_flow
+                .exchange(new_http_client(), AuthorizationCode::new(code))
+                .await
+                .map(|r| r.access_token().clone()),
             None => Err(Error::message(
                 ErrorKind::Other,
                 "Failed to retrieve authorization code.",
             )),
         }
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl TokenCredential for InteractiveBrowserCredential {
+    async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
+        self.get_access_token(scopes).await?;
     }
 }
 #[cfg(test)]
