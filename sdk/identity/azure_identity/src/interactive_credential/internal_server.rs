@@ -24,7 +24,19 @@ pub async fn open_url(url: &str) -> Option<String> {
 
     let spawned = executor.run(command_ostr, args).await;
 
-    return handle_browser_command(spawned);
+    match spawned {
+        Ok(spawned_ok) => {
+            //Could open the browser
+            if spawned_ok.stdout.len() > 0 && spawned_ok.stderr.len() == 0 {
+                return handle_browser_command(spawned_ok);
+            }
+        }
+        Err(e) => {
+            error!("Failed to start browser command: {e}");
+        }
+    }
+    info!("Open the following link manually in your browser: {url}");
+    None
 }
 
 /// Opens the given URL in the default system browser and starts a local web server
@@ -43,7 +55,19 @@ pub async fn open_url(url: &str) -> Option<String> {
 
     let spawned = executor.run(command_ostr, args).await;
 
-    return handle_browser_command(spawned);
+    match spawned {
+        Ok(spawned_ok) => {
+            //Could open the browser
+            if spawned_ok.stdout.len() > 0 && spawned_ok.stderr.len() == 0 {
+                return handle_browser_command(spawned_ok);
+            }
+        }
+        Err(e) => {
+            error!("Failed to start browser command: {e}");
+        }
+    }
+    info!("Open the following link manually in your browser: {url}");
+    None
 }
 
 /// Opens the given URL in the default system browser and starts a local web server
@@ -57,12 +81,23 @@ pub async fn open_url(url: &str) -> Option<String> {
     let executor: Arc<dyn Executor> = new_executor();
     if let Some(command) = find_linux_browser_command().await {
         let command_ostr = OsStr::new(&command);
-
         let args: &[&OsStr] = &[OsStr::new(url)];
 
         let spawned = executor.run(command_ostr, args).await;
 
-        return handle_browser_command(spawned);
+        match spawned {
+            Ok(spawned_ok) => {
+                //Could not open the browser
+                if spawned_ok.stdout.len() == 0 && spawned_ok.stderr.len() > 0 {
+                    info!("Open the following link manually in your browser: {url}");
+                }
+                return handle_browser_command(spawned_ok);
+            }
+            Err(e) => {
+                info!("Open the following link manually in your browser: {url}");
+                error!("Failed to start browser command: {e}");
+            }
+        }
     }
 
     info!("Open the following link manually in your browser: {url}");
@@ -113,14 +148,8 @@ async fn find_linux_browser_command() -> Option<String> {
 /// starting the browser if the browser could be started, then the webserver should be started to
 /// get the auth code
 #[allow(dead_code)]
-fn handle_browser_command(result: Result<Output, io::Error>) -> Option<String> {
-    match result {
-        Ok(_) => start_webserver(),
-        Err(e) => {
-            error!("Failed to start browser command: {e}");
-            None
-        }
-    }
+fn handle_browser_command(result: Output) -> Option<String> {
+    start_webserver()
 }
 
 /// Starts the webserver on the `http://localhost`. Returns None, if the server could not have
@@ -128,12 +157,16 @@ fn handle_browser_command(result: Result<Output, io::Error>) -> Option<String> {
 #[allow(dead_code)]
 /// Starts a simple HTTP server on localhost to receive the auth code.
 fn start_webserver() -> Option<String> {
-    TcpListener::bind(("127.0.0.1", LOCAL_SERVER_PORT))
+    info!("starting webserver");
+    let res = TcpListener::bind(("127.0.0.1", LOCAL_SERVER_PORT))
         .ok()
-        .and_then(handle_tcp_connection)
+        .and_then(handle_tcp_connection);
+    info!("ending webserver");
+    res
 }
 
 fn handle_tcp_connection(listener: TcpListener) -> Option<String> {
+    info!("HANDLING TCP CONNECTION");
     listener
         .incoming()
         .take(1)
@@ -147,9 +180,12 @@ fn handle_tcp_connection(listener: TcpListener) -> Option<String> {
 /// Returns also the html code to show if it worked
 #[allow(dead_code)]
 fn handle_client(mut stream: TcpStream) -> Option<String> {
+    info!("HANDLING CLIENT");
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .ok()?;
+
+    info!("after stream opening");
 
     let buf_reader = BufReader::new(&stream);
     let mut request_lines = vec![];

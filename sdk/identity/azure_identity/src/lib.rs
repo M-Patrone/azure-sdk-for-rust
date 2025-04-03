@@ -19,6 +19,7 @@ use azure_core::{error::ErrorKind, Error, Result};
 pub use azure_pipelines_credential::*;
 pub use chained_token_credential::*;
 pub use credentials::*;
+pub use interactive_credential::*;
 use std::borrow::Cow;
 
 fn validate_not_empty<C>(value: &str, message: C) -> Result<()>

@@ -10,6 +10,7 @@ use oauth2::{
     StandardTokenResponse,
 };
 use std::{str::FromStr, sync::Arc};
+use tracing::debug;
 
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
@@ -21,14 +22,18 @@ const DEFAULT_DEVELOPER_SIGNON_CLIENT_ID: &str = "04b07795-8ddb-461a-bbee-02f9e1
 #[allow(dead_code)]
 const DEFAULT_ORGANIZATIONS_TENANT_ID: &str = "organizations";
 
+/// Configuration options for `InteractiveBrowserCredential`.
+///
+/// This struct allows customization of the interactive browser authentication flow,
+/// including the client ID, tenant ID, and redirect URL used during the authentication process.
 #[derive(Clone)]
 pub struct InteractiveBrowserCredentialOptions {
     /// Client ID of the application.
-    pub(crate) client_id: Option<ClientId>,
+    pub client_id: Option<ClientId>,
     /// Tenant ID for the authentication request.
-    pub(crate) tenant_id: Option<String>,
+    pub tenant_id: Option<String>,
     /// Redirect URI where the authentication response is sent.
-    pub(crate) redirect_url: Option<Url>,
+    pub redirect_url: Option<Url>,
 }
 
 /// Provides interactive browser-based authentication.
@@ -38,7 +43,7 @@ pub struct InteractiveBrowserCredential {
 }
 
 impl InteractiveBrowserCredential {
-    /// Creates a new `InteractiveBrowserCredential` instance with optional parameters.
+    /// Creates a new `InteractiveBrowserCredential` instance with `InteractiveBrowserCredentialOptions` parameters.
     pub fn new(options: InteractiveBrowserCredentialOptions) -> azure_core::Result<Arc<Self>> {
         let client_id = Some(
             options

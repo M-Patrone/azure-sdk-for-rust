@@ -1,6 +1,4 @@
-use azure_identity::interactive_credential::interactive_browser_credential::{
-    InteractiveBrowserCredential, InteractiveBrowserCredentialOptions,
-};
+use azure_identity::{InteractiveBrowserCredential, InteractiveBrowserCredentialOptions};
 use oauth2::TokenResponse;
 use reqwest::Client;
 use std::error::Error;
@@ -22,7 +20,7 @@ async fn run_app_inter(subscription_id: String, tenant_id: String) -> Result<(),
         tenant_id: Some(tenant_id),
         redirect_url: None,
     };
-    let interactive_credentials = InteractiveBrowserCredential::new(None, Some(tenant_id), None)?;
+    let interactive_credentials = InteractiveBrowserCredential::new(options)?;
 
     let token_response = interactive_credentials
         .get_token(Some(&["https://management.azure.com/.default"]))
