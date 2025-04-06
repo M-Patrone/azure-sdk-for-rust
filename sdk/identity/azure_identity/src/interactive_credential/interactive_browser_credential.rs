@@ -12,7 +12,8 @@ use oauth2::{
     basic::BasicTokenType, AuthorizationCode, ClientId, EmptyExtraTokenFields,
     StandardTokenResponse,
 };
-use std::{str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc, time::Duration};
+use time::OffsetDateTime;
 
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
@@ -77,8 +78,14 @@ impl InteractiveBrowserCredential {
     ///
     /// If no scopes are provided, default scopes will be used.
     #[allow(dead_code)]
-    async fn get_access_token(&self, scopes: Option<&[&str]>) -> azure_core::Result<AccessToken> {
-        let scopes = scopes.unwrap_or(&DEFAULT_SCOPE_ARR);
+    async fn get_access_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
+        if scopes.is_empty() {
+            return Err(Error::new(
+                ErrorKind::Credential,
+                "exactly one scope required",
+            ));
+        }
+
         let options = self.options.clone();
 
         let authorization_code_flow = authorization_code_flow::authorize(
@@ -95,7 +102,12 @@ impl InteractiveBrowserCredential {
             Some(code) => authorization_code_flow
                 .exchange(new_http_client(), AuthorizationCode::new(code))
                 .await
-                .map(|r| r.access_token().clone()),
+                .map(|r| {
+                    AccessToken::new(
+                        r.access_token().secret().clone(),
+                        OffsetDateTime::now_utc() + r.expires_in().unwrap(),
+                    )
+                }),
             None => Err(Error::message(
                 ErrorKind::Other,
                 "Failed to retrieve authorization code.",
@@ -104,13 +116,35 @@ impl InteractiveBrowserCredential {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[async_trait::async_trait(?Send)]
 impl TokenCredential for InteractiveBrowserCredential {
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
-        self.get_access_token(scopes).await?;
+        self.get_access_token(scopes).await
     }
 }
+
+/// Convert a `AADv2` scope to an `AADv1` resource
+///
+/// Directly based on the `azure-sdk-for-python` implementation:
+/// ref: <https://github.com/Azure/azure-sdk-for-python/blob/d6aeefef46c94b056419613f1a5cc9eaa3af0d22/sdk/identity/azure-identity/azure/identity/_internal/__init__.py#L22>
+fn scopes_to_resource<'a>(scopes: &'a [&'a str]) -> azure_core::Result<&'a str> {
+    if scopes.len() != 1 {
+        return Err(Error::message(
+            ErrorKind::Credential,
+            "only one scope is supported for IMDS authentication",
+        ));
+    }
+
+    let Some(scope) = scopes.first() else {
+        return Err(Error::message(
+            ErrorKind::Credential,
+            "no scopes were provided",
+        ));
+    };
+
+    Ok(scope.strip_suffix("/.default").unwrap_or(*scope))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
