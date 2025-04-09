@@ -1,5 +1,6 @@
 use super::internal_server::*;
 use crate::authorization_code_flow;
+use crate::cache::TokenCache;
 use azure_core::credentials::TokenCredential;
 use azure_core::{
     credentials::AccessToken,
@@ -30,7 +31,7 @@ const DEFAULT_ORGANIZATIONS_TENANT_ID: &str = "organizations";
 ///
 /// This struct allows customization of the interactive browser authentication flow,
 /// including the client ID, tenant ID, and redirect URL used during the authentication process.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct InteractiveBrowserCredentialOptions {
     /// Client ID of the application.
     pub client_id: Option<String>,
@@ -40,6 +41,7 @@ pub struct InteractiveBrowserCredentialOptions {
     pub redirect_url: Option<Url>,
 
     pub http_client: Arc<dyn HttpClient>,
+    token_cache: TokenCache,
 }
 
 /// Provides interactive browser-based authentication.
@@ -74,6 +76,7 @@ impl InteractiveBrowserCredential {
                 tenant_id,
                 redirect_url,
                 http_client: options.http_client.clone(),
+                token_cache: TokenCache::new(),
             },
         })
     }
@@ -90,11 +93,11 @@ impl InteractiveBrowserCredential {
             ));
         }
 
-        let options = self.options.clone();
+        let options = &self.options;
         let scopes_refs: Vec<&str> = scopes.iter().map(|s| s.as_ref()).collect();
 
         let authorization_code_flow = authorization_code_flow::authorize(
-            ClientId::new(options.client_id.unwrap().clone()),
+            ClientId::new(*options.client_id.unwrap().to_string().clone()),
             None,
             &options.tenant_id.unwrap().clone(),
             options.redirect_url.unwrap().clone(),
@@ -149,7 +152,12 @@ impl InteractiveBrowserCredential {
 impl TokenCredential for InteractiveBrowserCredential {
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
         let scopes_owned: Vec<Cow<'_, str>> = scopes.iter().map(|s| Cow::Borrowed(*s)).collect();
-        self.get_access_token(scopes_owned).await
+        //self.get_access_token(scopes_owned).await
+
+        self.options
+            .token_cache
+            .get_token(scopes, self.get_access_token(scopes_owned))
+            .await
     }
 }
 
