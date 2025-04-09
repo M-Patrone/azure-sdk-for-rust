@@ -4,7 +4,7 @@ use azure_core::credentials::TokenCredential;
 use azure_core::{
     credentials::AccessToken,
     error::ErrorKind,
-    http::{new_http_client, Url},
+    http::{new_http_client, HttpClient, Url},
     Error,
 };
 use oauth2::TokenResponse;
@@ -12,6 +12,7 @@ use oauth2::{
     basic::BasicTokenType, AuthorizationCode, ClientId, EmptyExtraTokenFields,
     StandardTokenResponse,
 };
+use std::borrow::Cow;
 use std::{str::FromStr, sync::Arc, time::Duration};
 use time::OffsetDateTime;
 
@@ -37,6 +38,8 @@ pub struct InteractiveBrowserCredentialOptions {
     pub tenant_id: Option<String>,
     /// Redirect URI where the authentication response is sent.
     pub redirect_url: Option<Url>,
+
+    pub http_client: Arc<dyn HttpClient>,
 }
 
 /// Provides interactive browser-based authentication.
@@ -47,7 +50,7 @@ pub struct InteractiveBrowserCredential {
 
 impl InteractiveBrowserCredential {
     /// Creates a new `InteractiveBrowserCredential` instance with `InteractiveBrowserCredentialOptions` parameters.
-    pub fn new(options: InteractiveBrowserCredentialOptions) -> azure_core::Result<Arc<Self>> {
+    pub fn new(options: InteractiveBrowserCredentialOptions) -> azure_core::Result<Self> {
         let client_id = Some(
             options
                 .client_id
@@ -65,20 +68,21 @@ impl InteractiveBrowserCredential {
                 .expect("Failed to parse redirect URL")
         }));
 
-        Ok(Arc::new(Self {
+        Ok(Self {
             options: InteractiveBrowserCredentialOptions {
                 client_id,
                 tenant_id,
                 redirect_url,
+                http_client: options.http_client.clone(),
             },
-        }))
+        })
     }
 
     /// Starts the interactive browser authentication flow and returns an access token.
     ///
     /// If no scopes are provided, default scopes will be used.
     #[allow(dead_code)]
-    async fn get_access_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
+    async fn get_access_token(&self, scopes: Vec<Cow<'_, str>>) -> azure_core::Result<AccessToken> {
         if scopes.is_empty() {
             return Err(Error::new(
                 ErrorKind::Credential,
@@ -87,39 +91,65 @@ impl InteractiveBrowserCredential {
         }
 
         let options = self.options.clone();
+        let scopes_refs: Vec<&str> = scopes.iter().map(|s| s.as_ref()).collect();
 
         let authorization_code_flow = authorization_code_flow::authorize(
             ClientId::new(options.client_id.unwrap().clone()),
             None,
-            &options.tenant_id.unwrap(),
+            &options.tenant_id.unwrap().clone(),
             options.redirect_url.unwrap().clone(),
-            scopes,
+            &scopes_refs,
         );
 
-        let auth_code = open_url(authorization_code_flow.authorize_url.as_ref()).await;
+        let auth_code = open_url(authorization_code_flow.authorize_url.clone().as_ref()).await;
 
+        let b = AuthorizationCode::new("djfak".to_string()).clone();
+        let c = options.http_client.clone();
+
+        let a = authorization_code_flow.exchange(c, b).await?.clone(); //.await;
+
+        //let auth_code = Some("".to_string());
         match auth_code {
-            Some(code) => authorization_code_flow
-                .exchange(new_http_client(), AuthorizationCode::new(code))
-                .await
-                .map(|r| {
-                    AccessToken::new(
-                        r.access_token().secret().clone(),
-                        OffsetDateTime::now_utc() + r.expires_in().unwrap(),
+            Some(code) => {
+                /*
+                let acc = authorization_code_flow
+                    .exchange(
+                        options.http_client.clone(),
+                        AuthorizationCode::new(code).clone(),
                     )
-                }),
-            None => Err(Error::message(
-                ErrorKind::Other,
-                "Failed to retrieve authorization code.",
-            )),
-        }
+                    .await
+                    .map(|r| {
+                        return AccessToken::new(
+                            r.access_token().secret().clone(),
+                            OffsetDateTime::now_utc() + r.expires_in().unwrap().clone(),
+                        )
+                        .clone();
+
+                        return (AccessToken::new("test", OffsetDateTime::now_utc()));
+                    });
+
+                        */
+                //return acc;
+                return Ok(AccessToken::new("test", OffsetDateTime::now_utc()));
+            }
+            None => {
+                return Err(Error::message(
+                    ErrorKind::Other,
+                    "Failed to retrieve authorization code.".to_string(),
+                ))
+            }
+        };
+
+        //Ok(AccessToken::new("test", OffsetDateTime::now_utc()))
     }
 }
 
-#[async_trait::async_trait(?Send)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl TokenCredential for InteractiveBrowserCredential {
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
-        self.get_access_token(scopes).await
+        let scopes_owned: Vec<Cow<'_, str>> = scopes.iter().map(|s| Cow::Borrowed(*s)).collect();
+        self.get_access_token(scopes_owned).await
     }
 }
 
