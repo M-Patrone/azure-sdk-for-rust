@@ -31,7 +31,7 @@ const DEFAULT_ORGANIZATIONS_TENANT_ID: &str = "organizations";
 ///
 /// This struct allows customization of the interactive browser authentication flow,
 /// including the client ID, tenant ID, and redirect URL used during the authentication process.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InteractiveBrowserCredentialOptions {
     /// Client ID of the application.
     pub client_id: Option<String>,
@@ -41,13 +41,13 @@ pub struct InteractiveBrowserCredentialOptions {
     pub redirect_url: Option<Url>,
 
     pub http_client: Arc<dyn HttpClient>,
-    token_cache: TokenCache,
 }
 
 /// Provides interactive browser-based authentication.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct InteractiveBrowserCredential {
     options: InteractiveBrowserCredentialOptions,
+    token_cache: TokenCache,
 }
 
 impl InteractiveBrowserCredential {
@@ -76,8 +76,8 @@ impl InteractiveBrowserCredential {
                 tenant_id,
                 redirect_url,
                 http_client: options.http_client.clone(),
-                token_cache: TokenCache::new(),
             },
+            token_cache: TokenCache::new(),
         })
     }
 
@@ -85,7 +85,7 @@ impl InteractiveBrowserCredential {
     ///
     /// If no scopes are provided, default scopes will be used.
     #[allow(dead_code)]
-    async fn get_access_token(&self, scopes: Vec<Cow<'_, str>>) -> azure_core::Result<AccessToken> {
+    async fn get_access_token(self, scopes: Vec<Cow<'_, str>>) -> azure_core::Result<AccessToken> {
         if scopes.is_empty() {
             return Err(Error::new(
                 ErrorKind::Credential,
@@ -93,23 +93,24 @@ impl InteractiveBrowserCredential {
             ));
         }
 
-        let options = &self.options;
         let scopes_refs: Vec<&str> = scopes.iter().map(|s| s.as_ref()).collect();
 
+        let client_id = ClientId::new(self.options.client_id.unwrap().to_string());
+
         let authorization_code_flow = authorization_code_flow::authorize(
-            ClientId::new(*options.client_id.unwrap().to_string().clone()),
+            client_id,
             None,
-            &options.tenant_id.unwrap().clone(),
-            options.redirect_url.unwrap().clone(),
+            &self.options.tenant_id.unwrap().clone(),
+            self.options.redirect_url.unwrap().clone(),
             &scopes_refs,
         );
 
         let auth_code = open_url(authorization_code_flow.authorize_url.clone().as_ref()).await;
 
         let b = AuthorizationCode::new("djfak".to_string()).clone();
-        let c = options.http_client.clone();
+        //let c = self.options.http_client.clone();
 
-        let a = authorization_code_flow.exchange(c, b).await?.clone(); //.await;
+        // let a = authorization_code_flow.exchange(c, b).await?.clone(); //.await;
 
         //let auth_code = Some("".to_string());
         match auth_code {
