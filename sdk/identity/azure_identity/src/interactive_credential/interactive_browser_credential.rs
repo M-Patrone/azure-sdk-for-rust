@@ -7,12 +7,14 @@ use azure_core::{
     http::{new_http_client, HttpClient, Url},
     Error,
 };
+use futures::future;
 use oauth2::TokenResponse;
 use oauth2::{
     basic::BasicTokenType, AuthorizationCode, ClientId, EmptyExtraTokenFields,
     StandardTokenResponse,
 };
 use std::borrow::Cow;
+use std::future::Future;
 use std::{str::FromStr, sync::Arc, time::Duration};
 use time::OffsetDateTime;
 
@@ -142,12 +144,38 @@ impl InteractiveBrowserCredential {
 
         //Ok(AccessToken::new("test", OffsetDateTime::now_utc()))
     }
-}
+    /*
+    fn get_access_token_test(
+        &self,
+        scopes: &[&str],
+    ) -> impl Send + Future<Output = azure_core::Result<AccessToken>> {
+        assert_send(async move {
+            let authorization_code_flow = authorization_code_flow::authorize(
+                ClientId::new("jkadjfa".to_string()),
+                None,
+                &"jkadjfa".to_string(),
+                Url::from_str("str").unwrap(),
+                &scopes,
+            );
 
+            let b = AuthorizationCode::new("djfak".to_string()).clone();
+            let c = new_http_client();
+
+            let a = authorization_code_flow.exchange(c, b).await?.clone();
+
+            Ok(AccessToken::new("test", OffsetDateTime::now_utc()))
+        })
+    }
+    */
+}
+fn assert_send<T>(fut: impl Send + Future<Output = T>) -> impl Send + Future<Output = T> {
+    fut
+}
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl TokenCredential for InteractiveBrowserCredential {
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
+        //self.get_access_token_test(scopes).await
         let scopes_owned: Vec<Cow<'_, str>> = scopes.iter().map(|s| Cow::Borrowed(*s)).collect();
         self.get_access_token(scopes_owned).await
     }

@@ -99,8 +99,18 @@ impl AuthorizationCodeFlow {
     ) -> azure_core::Result<
         oauth2::StandardTokenResponse<oauth2::EmptyExtraTokenFields, oauth2::basic::BasicTokenType>,
     > {
-        let oauth_http_client = Oauth2HttpClient::new(http_client.clone());
-        let client = |request: HttpRequest| oauth_http_client.request(request);
+        //        let oauth_http_client = Oauth2HttpClient::new(http_client.clone());
+        //        let client = |request: HttpRequest| oauth_http_client.request(request);
+
+        let oauth_http_client = Arc::new(Oauth2HttpClient::new(http_client.clone()));
+        let client = {
+            let oauth_http_client = oauth_http_client.clone();
+            move |request: HttpRequest| {
+                let oauth_http_client = oauth_http_client.clone();
+                async move { oauth_http_client.request(request).await }
+            }
+        };
+
         self.client
             .exchange_code(code)
             // Send the PKCE code verifier in the token request
