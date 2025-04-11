@@ -102,6 +102,7 @@ impl AuthorizationCodeFlow {
         //        let oauth_http_client = Oauth2HttpClient::new(http_client.clone());
         //        let client = |request: HttpRequest| oauth_http_client.request(request);
 
+        //improve problem with implementing the `send`
         let oauth_http_client = Arc::new(Oauth2HttpClient::new(http_client.clone()));
         let client = {
             let oauth_http_client = oauth_http_client.clone();

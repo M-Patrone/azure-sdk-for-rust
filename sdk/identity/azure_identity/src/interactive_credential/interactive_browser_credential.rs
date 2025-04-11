@@ -104,16 +104,8 @@ impl InteractiveBrowserCredential {
         );
 
         let auth_code = open_url(authorization_code_flow.authorize_url.clone().as_ref()).await;
-
-        let b = AuthorizationCode::new("djfak".to_string()).clone();
-        let c = options.http_client.clone();
-
-        let a = authorization_code_flow.exchange(c, b).await?.clone(); //.await;
-
-        //let auth_code = Some("".to_string());
         match auth_code {
             Some(code) => {
-                /*
                 let acc = authorization_code_flow
                     .exchange(
                         options.http_client.clone(),
@@ -126,13 +118,9 @@ impl InteractiveBrowserCredential {
                             OffsetDateTime::now_utc() + r.expires_in().unwrap().clone(),
                         )
                         .clone();
-
-                        return (AccessToken::new("test", OffsetDateTime::now_utc()));
                     });
 
-                        */
-                //return acc;
-                return Ok(AccessToken::new("test", OffsetDateTime::now_utc()));
+                return acc;
             }
             None => {
                 return Err(Error::message(
