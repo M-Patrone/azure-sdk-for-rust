@@ -1,20 +1,16 @@
 use super::internal_server::*;
 use crate::authorization_code_flow;
-use crate::cache::TokenCache;
 use azure_core::credentials::TokenCredential;
 use azure_core::{
     credentials::AccessToken,
     error::ErrorKind,
-    http::{new_http_client, HttpClient, Url},
+    http::{new_http_client, Url},
     Error,
 };
 use oauth2::TokenResponse;
-use oauth2::{
-    basic::BasicTokenType, AuthorizationCode, ClientId, EmptyExtraTokenFields,
-    StandardTokenResponse,
-};
-use std::borrow::Cow;
-use std::{str::FromStr, sync::Arc, time::Duration};
+use oauth2::{AuthorizationCode, ClientId};
+use std::collections::HashSet;
+use std::str::FromStr;
 use time::OffsetDateTime;
 
 /// Default OAuth scopes used when none are provided.
@@ -31,7 +27,7 @@ const DEFAULT_ORGANIZATIONS_TENANT_ID: &str = "organizations";
 ///
 /// This struct allows customization of the interactive browser authentication flow,
 /// including the client ID, tenant ID, and redirect URL used during the authentication process.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct InteractiveBrowserCredentialOptions {
     /// Client ID of the application.
     pub client_id: Option<String>,
@@ -39,15 +35,12 @@ pub struct InteractiveBrowserCredentialOptions {
     pub tenant_id: Option<String>,
     /// Redirect URI where the authentication response is sent.
     pub redirect_url: Option<Url>,
-
-    pub http_client: Arc<dyn HttpClient>,
 }
 
 /// Provides interactive browser-based authentication.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct InteractiveBrowserCredential {
     options: InteractiveBrowserCredentialOptions,
-    token_cache: TokenCache,
 }
 
 impl InteractiveBrowserCredential {
@@ -75,9 +68,7 @@ impl InteractiveBrowserCredential {
                 client_id,
                 tenant_id,
                 redirect_url,
-                http_client: options.http_client.clone(),
             },
-            token_cache: TokenCache::new(),
         })
     }
 
@@ -85,42 +76,24 @@ impl InteractiveBrowserCredential {
     ///
     /// If no scopes are provided, default scopes will be used.
     #[allow(dead_code)]
-    async fn get_access_token(self, scopes: Vec<Cow<'_, str>>) -> azure_core::Result<AccessToken> {
-        if scopes.is_empty() {
-            return Err(Error::new(
-                ErrorKind::Credential,
-                "exactly one scope required",
-            ));
-        }
+    async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
+        let a = ensure_default_scopes(scopes);
 
-        let scopes_refs: Vec<&str> = scopes.iter().map(|s| s.as_ref()).collect();
-
-        let client_id = ClientId::new(self.options.client_id.unwrap().to_string());
+        let options = self.options.clone();
 
         let authorization_code_flow = authorization_code_flow::authorize(
-            client_id,
+            ClientId::new(options.client_id.unwrap().clone()),
             None,
-            &self.options.tenant_id.unwrap().clone(),
-            self.options.redirect_url.unwrap().clone(),
-            &scopes_refs,
+            &options.tenant_id.unwrap().clone(),
+            options.redirect_url.unwrap().clone(),
+            &a,
         );
 
         let auth_code = open_url(authorization_code_flow.authorize_url.clone().as_ref()).await;
-
-        let b = AuthorizationCode::new("djfak".to_string()).clone();
-        //let c = self.options.http_client.clone();
-
-        // let a = authorization_code_flow.exchange(c, b).await?.clone(); //.await;
-
-        //let auth_code = Some("".to_string());
         match auth_code {
             Some(code) => {
-                /*
                 let acc = authorization_code_flow
-                    .exchange(
-                        options.http_client.clone(),
-                        AuthorizationCode::new(code).clone(),
-                    )
+                    .exchange(new_http_client(), AuthorizationCode::new(code).clone())
                     .await
                     .map(|r| {
                         return AccessToken::new(
@@ -128,13 +101,9 @@ impl InteractiveBrowserCredential {
                             OffsetDateTime::now_utc() + r.expires_in().unwrap().clone(),
                         )
                         .clone();
-
-                        return (AccessToken::new("test", OffsetDateTime::now_utc()));
                     });
 
-                        */
-                //return acc;
-                return Ok(AccessToken::new("test", OffsetDateTime::now_utc()));
+                return acc;
             }
             None => {
                 return Err(Error::message(
@@ -143,47 +112,29 @@ impl InteractiveBrowserCredential {
                 ))
             }
         };
-
-        //Ok(AccessToken::new("test", OffsetDateTime::now_utc()))
     }
 }
-
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl TokenCredential for InteractiveBrowserCredential {
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
-        let scopes_owned: Vec<Cow<'_, str>> = scopes.iter().map(|s| Cow::Borrowed(*s)).collect();
-        //self.get_access_token(scopes_owned).await
-
-        self.options
-            .token_cache
-            .get_token(scopes, self.get_access_token(scopes_owned))
-            .await
+        self.get_token(scopes).await
     }
 }
 
-/// Convert a `AADv2` scope to an `AADv1` resource
-///
-/// Directly based on the `azure-sdk-for-python` implementation:
-/// ref: <https://github.com/Azure/azure-sdk-for-python/blob/d6aeefef46c94b056419613f1a5cc9eaa3af0d22/sdk/identity/azure-identity/azure/identity/_internal/__init__.py#L22>
-fn scopes_to_resource<'a>(scopes: &'a [&'a str]) -> azure_core::Result<&'a str> {
-    if scopes.len() != 1 {
-        return Err(Error::message(
-            ErrorKind::Credential,
-            "only one scope is supported for IMDS authentication",
-        ));
+///check if there at least the default scopes included
+fn ensure_default_scopes<'a>(scopes: &'a [&'a str]) -> Vec<&'a str> {
+    let mut scope_set: HashSet<&'a str> = scopes.iter().copied().collect();
+    let mut result = scopes.to_vec();
+
+    for default_scope in DEFAULT_SCOPE_ARR.iter() {
+        if scope_set.insert(default_scope) {
+            result.push(default_scope);
+        }
     }
 
-    let Some(scope) = scopes.first() else {
-        return Err(Error::message(
-            ErrorKind::Credential,
-            "no scopes were provided",
-        ));
-    };
-
-    Ok(scope.strip_suffix("/.default").unwrap_or(*scope))
+    result
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,8 +162,8 @@ mod tests {
             redirect_url: None,
         })
         .expect("Failed to create credential");
-
-        let token_response = credential.get_token(None).await;
+        let scopes = &["https://management.azure.com/.default"];
+        let token_response = credential.get_token(scopes).await;
         debug!("Authentication result: {:#?}", token_response);
         assert!(token_response.is_ok());
     }
