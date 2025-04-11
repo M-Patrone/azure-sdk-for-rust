@@ -40,8 +40,6 @@ pub struct InteractiveBrowserCredentialOptions {
     pub tenant_id: Option<String>,
     /// Redirect URI where the authentication response is sent.
     pub redirect_url: Option<Url>,
-
-    pub http_client: Arc<dyn HttpClient>,
 }
 
 /// Provides interactive browser-based authentication.
@@ -75,7 +73,6 @@ impl InteractiveBrowserCredential {
                 client_id,
                 tenant_id,
                 redirect_url,
-                http_client: options.http_client.clone(),
             },
         })
     }
@@ -84,7 +81,7 @@ impl InteractiveBrowserCredential {
     ///
     /// If no scopes are provided, default scopes will be used.
     #[allow(dead_code)]
-    async fn get_access_token(&self, scopes: Vec<Cow<'_, str>>) -> azure_core::Result<AccessToken> {
+    async fn get_access_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
         if scopes.is_empty() {
             return Err(Error::new(
                 ErrorKind::Credential,
@@ -93,24 +90,20 @@ impl InteractiveBrowserCredential {
         }
 
         let options = self.options.clone();
-        let scopes_refs: Vec<&str> = scopes.iter().map(|s| s.as_ref()).collect();
 
         let authorization_code_flow = authorization_code_flow::authorize(
             ClientId::new(options.client_id.unwrap().clone()),
             None,
             &options.tenant_id.unwrap().clone(),
             options.redirect_url.unwrap().clone(),
-            &scopes_refs,
+            &scopes,
         );
 
         let auth_code = open_url(authorization_code_flow.authorize_url.clone().as_ref()).await;
         match auth_code {
             Some(code) => {
                 let acc = authorization_code_flow
-                    .exchange(
-                        options.http_client.clone(),
-                        AuthorizationCode::new(code).clone(),
-                    )
+                    .exchange(new_http_client(), AuthorizationCode::new(code).clone())
                     .await
                     .map(|r| {
                         return AccessToken::new(
@@ -163,9 +156,9 @@ fn assert_send<T>(fut: impl Send + Future<Output = T>) -> impl Send + Future<Out
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl TokenCredential for InteractiveBrowserCredential {
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
-        //self.get_access_token_test(scopes).await
-        let scopes_owned: Vec<Cow<'_, str>> = scopes.iter().map(|s| Cow::Borrowed(*s)).collect();
-        self.get_access_token(scopes_owned).await
+        self.get_access_token(scopes).await
+        // let scopes_owned: Vec<Cow<'_, str>> = scopes.iter().map(|s| Cow::Borrowed(*s)).collect();
+        // self.get_access_token(scopes_owned).await
     }
 }
 
@@ -218,8 +211,8 @@ mod tests {
             redirect_url: None,
         })
         .expect("Failed to create credential");
-
-        let token_response = credential.get_token(None).await;
+        let scopes = &["https://management.azure.com/.default"];
+        let token_response = credential.get_token(scopes).await;
         debug!("Authentication result: {:#?}", token_response);
         assert!(token_response.is_ok());
     }
