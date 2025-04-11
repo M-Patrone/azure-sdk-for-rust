@@ -1,9 +1,8 @@
+use azure_core::credentials::TokenCredential;
 use azure_identity::{InteractiveBrowserCredential, InteractiveBrowserCredentialOptions};
-use oauth2::TokenResponse;
 use reqwest::Client;
 use std::error::Error;
 use url::Url;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let test_subscription_id =
@@ -23,10 +22,10 @@ async fn run_app_inter(subscription_id: String, tenant_id: String) -> Result<(),
     let interactive_credentials = InteractiveBrowserCredential::new(options)?;
 
     let token_response = interactive_credentials
-        .get_token(Some(&["https://management.azure.com/.default"]))
+        .get_token(&["https://management.azure.com/.default"])
         .await?;
 
-    let access_token_secret = token_response.access_token().secret();
+    let access_token_secret = token_response.token.secret();
 
     let url = Url::parse(&format!(
                  "https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.Storage/storageAccounts?api-version=2019-06-01"
