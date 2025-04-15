@@ -80,7 +80,7 @@ impl InteractiveBrowserCredential {
     /// If no scopes are provided, default scopes will be used.
     #[allow(dead_code)]
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
-        let a = ensure_default_scopes(scopes);
+        let verified_scopes = ensure_default_scopes(scopes);
 
         let options = self.options.clone();
 
@@ -89,7 +89,7 @@ impl InteractiveBrowserCredential {
             None,
             &options.tenant_id.unwrap().clone(),
             options.redirect_url.unwrap().clone(),
-            &a,
+            &verified_scopes,
         );
 
         let auth_code = open_url(authorization_code_flow.authorize_url.clone().as_ref()).await;
