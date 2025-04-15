@@ -1,5 +1,6 @@
 use super::internal_server::*;
 use crate::authorization_code_flow;
+use crate::cache::TokenCache;
 use azure_core::credentials::TokenCredential;
 use azure_core::{
     credentials::AccessToken,
@@ -38,9 +39,10 @@ pub struct InteractiveBrowserCredentialOptions {
 }
 
 /// Provides interactive browser-based authentication.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct InteractiveBrowserCredential {
     options: InteractiveBrowserCredentialOptions,
+    cache: TokenCache,
 }
 
 impl InteractiveBrowserCredential {
@@ -69,6 +71,7 @@ impl InteractiveBrowserCredential {
                 tenant_id,
                 redirect_url,
             },
+            cache: TokenCache::new(),
         })
     }
 
@@ -118,7 +121,7 @@ impl InteractiveBrowserCredential {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl TokenCredential for InteractiveBrowserCredential {
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
-        self.get_token(scopes).await
+        self.cache.get_token(scopes, self.get_token(scopes)).await
     }
 }
 
