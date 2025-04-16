@@ -189,10 +189,12 @@ fn handle_client(mut stream: TcpStream) -> Option<String> {
 
     let buf_reader = BufReader::new(&stream);
     let mut request_lines = vec![];
+
     for line in buf_reader.lines().map_while(Result::ok) {
         if line.is_empty() {
             break;
         }
+
         request_lines.push(line);
     }
 
@@ -220,6 +222,7 @@ fn handle_client(mut stream: TcpStream) -> Option<String> {
 /// Extracts the `code` query parameter from the request.
 #[allow(dead_code)]
 fn extract_auth_code(request: &str) -> Option<String> {
+    info!("output full request: {:#?}", request);
     let code_start = request.rfind("code=")? + 5;
     let rest = &request[code_start..];
     let end = rest.find('&').unwrap_or(rest.len());

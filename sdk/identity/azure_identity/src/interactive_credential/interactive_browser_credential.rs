@@ -13,6 +13,7 @@ use oauth2::{AuthorizationCode, ClientId};
 use std::collections::HashSet;
 use std::str::FromStr;
 use time::OffsetDateTime;
+use tracing::info;
 
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]

@@ -14,7 +14,8 @@ use azure_core::{
 };
 use oauth2::{basic::BasicClient, EndpointNotSet, EndpointSet, HttpRequest, Scope};
 use oauth2::{ClientId, ClientSecret};
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
+use tracing::info;
 
 /// Start an authorization code flow.
 ///
@@ -66,6 +67,18 @@ pub fn authorize(
         .add_scopes(scopes)
         .set_pkce_challenge(pkce_code_challenge)
         .url();
+
+    let url_string: String = format!("{}", authorize_url.as_str().to_string());
+
+    //https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+    let url_replaced = url_string.replace(
+        "response_type=code",
+        "response_type=code id_token&response_mode=fragment",
+    );
+
+    let authorize_url = Url::from_str(&url_replaced).unwrap();
+
+    info!("authorize url : {:#?}", authorize_url);
 
     AuthorizationCodeFlow {
         client,
