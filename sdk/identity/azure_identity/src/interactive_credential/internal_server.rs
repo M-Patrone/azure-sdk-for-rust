@@ -188,27 +188,39 @@ fn handle_client(mut stream: TcpStream) -> Option<String> {
         .ok()?;
 
     info!("after stream opening");
-    let mut buffer = [0u8; 1024];
-    let mut request_bytes = Vec::new();
 
+    let mut buf_reader = BufReader::new(&stream);
+    let mut headers = String::new();
+    let mut content_length: usize = 0;
+
+    // Header lesen
     loop {
-        match stream.read(&mut buffer) {
-            Ok(0) => break, // Verbindung wurde geschlossen
-            Ok(n) => {
-                request_bytes.extend_from_slice(&buffer[..n]);
-                if n < 1024 {
-                    break; // Weniger als 1024 Bytes -> vermutlich alles gelesen
-                }
-            }
-            Err(e) => {
-                error!("Read error: {:?}", e);
-                return None;
-            }
+        let mut line = String::new();
+        let bytes_read = buf_reader.read_line(&mut line).ok()?;
+        if bytes_read == 0 {
+            info!("Connection closed by client.");
+            break;
         }
+
+        //end of headers
+        if line == "\r\n" {
+            break;
+        }
+
+        if let Some(cl) = line.strip_prefix("Content-Length:") {
+            content_length = cl.trim().parse().unwrap_or(0);
+        }
+
+        headers.push_str(&line);
     }
 
-    let request = String::from_utf8_lossy(&request_bytes).to_string();
-    let auth_code = extract_auth_code(&request);
+    let mut body = vec![0; content_length];
+    buf_reader.read_exact(&mut body).ok()?;
+    let body_str = String::from_utf8_lossy(&body);
+
+    info!("Full request headers:\n{}", headers);
+    info!("Full request body:\n{}", body_str);
+    let auth_code = extract_auth_code(&body_str);
     let response_body = r#"<!DOCTYPE html>
 <html><head><title>Auth Complete</title></head>
 <body><p>Authentication complete. You may close this tab.</p></body>

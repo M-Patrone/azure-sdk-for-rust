@@ -69,11 +69,11 @@ pub fn authorize(
         .url();
 
     let url_string: String = format!("{}", authorize_url.as_str().to_string());
-
+    //let url_replaced = url_string;
     //https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
     let url_replaced = url_string.replace(
         "response_type=code",
-        "response_type=code id_token&response_mode=fragment&nonce=abcde",
+        "response_type=code id_token&response_mode=form_post&nonce=abcde",
     );
 
     let authorize_url = Url::from_str(&url_replaced).unwrap();
