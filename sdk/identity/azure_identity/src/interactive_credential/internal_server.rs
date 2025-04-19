@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::process::Output;
 use std::time::Duration;
@@ -77,6 +77,8 @@ pub async fn open_url(url: &str) -> Option<String> {
 pub async fn open_url(url: &str) -> Option<String> {
     use azure_core::process::{new_executor, Executor};
     use std::{ffi::OsStr, sync::Arc};
+
+    info!("only authorize url: {}", url.clone());
 
     let executor: Arc<dyn Executor> = new_executor();
     if let Some(command) = find_linux_browser_command().await {
@@ -161,7 +163,7 @@ fn start_webserver() -> Option<String> {
     let res = TcpListener::bind(("127.0.0.1", LOCAL_SERVER_PORT))
         .ok()
         .and_then(handle_tcp_connection);
-    info!("ending webserver");
+    info!("ending webserver, {:#?}", res);
     res
 }
 
@@ -186,20 +188,26 @@ fn handle_client(mut stream: TcpStream) -> Option<String> {
         .ok()?;
 
     info!("after stream opening");
+    let mut buffer = [0u8; 1024];
+    let mut request_bytes = Vec::new();
 
-    let buf_reader = BufReader::new(&stream);
-    let mut request_lines = vec![];
-
-    for line in buf_reader.lines().map_while(Result::ok) {
-        if line.is_empty() {
-            break;
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => break, // Verbindung wurde geschlossen
+            Ok(n) => {
+                request_bytes.extend_from_slice(&buffer[..n]);
+                if n < 1024 {
+                    break; // Weniger als 1024 Bytes -> vermutlich alles gelesen
+                }
+            }
+            Err(e) => {
+                error!("Read error: {:?}", e);
+                return None;
+            }
         }
-
-        request_lines.push(line);
     }
 
-    let request = request_lines.join("\n");
-
+    let request = String::from_utf8_lossy(&request_bytes).to_string();
     let auth_code = extract_auth_code(&request);
     let response_body = r#"<!DOCTYPE html>
 <html><head><title>Auth Complete</title></head>

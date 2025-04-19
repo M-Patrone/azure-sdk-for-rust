@@ -73,12 +73,10 @@ pub fn authorize(
     //https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
     let url_replaced = url_string.replace(
         "response_type=code",
-        "response_type=code id_token&response_mode=fragment",
+        "response_type=code id_token&response_mode=fragment&nonce=abcde",
     );
 
     let authorize_url = Url::from_str(&url_replaced).unwrap();
-
-    info!("authorize url : {:#?}", authorize_url);
 
     AuthorizationCodeFlow {
         client,

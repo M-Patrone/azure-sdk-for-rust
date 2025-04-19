@@ -94,6 +94,7 @@ impl InteractiveBrowserCredential {
         );
 
         let auth_code = open_url(authorization_code_flow.authorize_url.clone().as_ref()).await;
+
         match auth_code {
             Some(code) => {
                 let acc = authorization_code_flow
