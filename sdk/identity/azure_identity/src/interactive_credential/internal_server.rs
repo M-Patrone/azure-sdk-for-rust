@@ -8,11 +8,17 @@ use tracing::{error, info};
 #[allow(dead_code)]
 pub const LOCAL_SERVER_PORT: u16 = 47828;
 
+#[derive(Debug)]
+pub struct TokenPair {
+    pub auth_code: String,
+    pub id_token: String,
+}
+
 /// Opens the given URL in the default system browser and starts a local web server
 /// to receive the authorization code.
 #[allow(dead_code)]
 #[cfg(target_os = "windows")]
-pub async fn open_url(url: &str) -> Option<String> {
+pub async fn open_url(url: &str) -> Option<TokenPair> {
     use azure_core::process::{new_executor, Executor};
     use std::{ffi::OsStr, sync::Arc};
 
@@ -43,7 +49,7 @@ pub async fn open_url(url: &str) -> Option<String> {
 /// to receive the authorization code.
 #[allow(dead_code)]
 #[cfg(target_os = "macos")]
-pub async fn open_url(url: &str) -> Option<String> {
+pub async fn open_url(url: &str) -> Option<TokenPair> {
     use azure_core::process::{new_executor, Executor};
     use std::{ffi::OsStr, sync::Arc};
 
@@ -74,7 +80,7 @@ pub async fn open_url(url: &str) -> Option<String> {
 /// to receive the authorization code.
 #[allow(dead_code)]
 #[cfg(target_os = "linux")]
-pub async fn open_url(url: &str) -> Option<String> {
+pub async fn open_url(url: &str) -> Option<TokenPair> {
     use azure_core::process::{new_executor, Executor};
     use std::{ffi::OsStr, sync::Arc};
 
@@ -150,7 +156,7 @@ async fn find_linux_browser_command() -> Option<String> {
 /// starting the browser if the browser could be started, then the webserver should be started to
 /// get the auth code
 #[allow(dead_code)]
-fn handle_browser_command(result: Output) -> Option<String> {
+fn handle_browser_command(result: Output) -> Option<TokenPair> {
     start_webserver()
 }
 
@@ -158,7 +164,7 @@ fn handle_browser_command(result: Output) -> Option<String> {
 /// started
 #[allow(dead_code)]
 /// Starts a simple HTTP server on localhost to receive the auth code.
-fn start_webserver() -> Option<String> {
+fn start_webserver() -> Option<TokenPair> {
     info!("starting webserver");
     let res = TcpListener::bind(("127.0.0.1", LOCAL_SERVER_PORT))
         .ok()
@@ -167,7 +173,7 @@ fn start_webserver() -> Option<String> {
     res
 }
 
-fn handle_tcp_connection(listener: TcpListener) -> Option<String> {
+fn handle_tcp_connection(listener: TcpListener) -> Option<TokenPair> {
     info!("HANDLING TCP CONNECTION");
     listener
         .incoming()
@@ -181,7 +187,7 @@ fn handle_tcp_connection(listener: TcpListener) -> Option<String> {
 /// if the stream could be opened, we read the whole request and try to extract the auth_code
 /// Returns also the html code to show if it worked
 #[allow(dead_code)]
-fn handle_client(mut stream: TcpStream) -> Option<String> {
+fn handle_client(mut stream: TcpStream) -> Option<TokenPair> {
     info!("HANDLING CLIENT");
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
@@ -220,7 +226,9 @@ fn handle_client(mut stream: TcpStream) -> Option<String> {
 
     info!("Full request headers:\n{}", headers);
     info!("Full request body:\n{}", body_str);
-    let auth_code = extract_auth_code(&body_str);
+
+    let res_auth = extract_auth_information(&body_str);
+
     let response_body = r#"<!DOCTYPE html>
 <html><head><title>Auth Complete</title></head>
 <body><p>Authentication complete. You may close this tab.</p></body>
@@ -236,7 +244,26 @@ fn handle_client(mut stream: TcpStream) -> Option<String> {
     stream.flush().ok()?;
     stream.shutdown(Shutdown::Both).ok()?;
 
-    auth_code
+    res_auth
+}
+
+fn extract_auth_information(body_str: &str) -> Option<TokenPair> {
+    let parsed: std::collections::HashMap<_, _> = url::form_urlencoded::parse(body_str.as_bytes())
+        .into_owned()
+        .collect();
+
+    let code = parsed.get("code").cloned();
+    let id_token = parsed.get("id_token").cloned();
+    let token_pair: Option<TokenPair> = match (code, id_token) {
+        (Some(auth_code), Some(id_token)) => Some(TokenPair {
+            id_token,
+            auth_code,
+        }),
+        _ => None,
+    };
+
+    info!("token_pair information: {:#?}", token_pair);
+    token_pair
 }
 
 /// Extracts the `code` query parameter from the request.

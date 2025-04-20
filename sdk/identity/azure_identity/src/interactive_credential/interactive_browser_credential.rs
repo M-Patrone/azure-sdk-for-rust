@@ -1,6 +1,6 @@
 use super::internal_server::*;
-use crate::authorization_code_flow;
 use crate::cache::TokenCache;
+use crate::hybrid_flow;
 use azure_core::credentials::TokenCredential;
 use azure_core::{
     credentials::AccessToken,
@@ -13,7 +13,6 @@ use oauth2::{AuthorizationCode, ClientId};
 use std::collections::HashSet;
 use std::str::FromStr;
 use time::OffsetDateTime;
-use tracing::info;
 
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
@@ -85,7 +84,7 @@ impl InteractiveBrowserCredential {
 
         let options = self.options.clone();
 
-        let authorization_code_flow = authorization_code_flow::authorize(
+        let hybrid_flow_code = hybrid_flow::authorize(
             ClientId::new(options.client_id.unwrap().clone()),
             None,
             &options.tenant_id.unwrap().clone(),
@@ -93,12 +92,15 @@ impl InteractiveBrowserCredential {
             &verified_scopes,
         );
 
-        let auth_code = open_url(authorization_code_flow.authorize_url.clone().as_ref()).await;
+        let auth_code = open_url(hybrid_flow_code.authorize_url.clone().as_ref()).await;
 
         match auth_code {
-            Some(code) => {
-                let acc = authorization_code_flow
-                    .exchange(new_http_client(), AuthorizationCode::new(code).clone())
+            Some(token_pair) => {
+                let acc = hybrid_flow_code
+                    .exchange(
+                        new_http_client(),
+                        AuthorizationCode::new(token_pair.auth_code).clone(),
+                    )
                     .await
                     .map(|r| {
                         return AccessToken::new(

@@ -17,7 +17,7 @@ use oauth2::{ClientId, ClientSecret};
 use std::{str::FromStr, sync::Arc};
 use tracing::info;
 
-/// Start an authorization code flow.
+/// Start an hybrid flow.
 ///
 /// The values for `client_id`, `client_secret`, `tenant_id`, and `redirect_url` can all be found
 /// inside of the Azure portal.
@@ -69,7 +69,13 @@ pub fn authorize(
         .url();
 
     let url_string: String = format!("{}", authorize_url.as_str().to_string());
-    let authorize_url = Url::from_str(&url_string).unwrap();
+    //https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
+    let url_replaced = url_string.replace(
+        "response_type=code",
+        "response_type=code id_token&response_mode=form_post&nonce=abcde",
+    );
+
+    let authorize_url = Url::from_str(&url_replaced).unwrap();
 
     AuthorizationCodeFlow {
         client,
