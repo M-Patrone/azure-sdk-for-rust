@@ -8,11 +8,14 @@ use azure_core::{
     http::{new_http_client, Url},
     Error,
 };
+use base64::engine::general_purpose;
+use base64::Engine;
 use oauth2::TokenResponse;
 use oauth2::{AuthorizationCode, ClientId};
 use std::collections::HashSet;
 use std::str::FromStr;
 use time::OffsetDateTime;
+use tracing::info;
 
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
@@ -92,7 +95,8 @@ impl InteractiveBrowserCredential {
             &verified_scopes,
         );
 
-        let auth_code = open_url(hybrid_flow_code.authorize_url.clone().as_ref()).await;
+        let auth_code: Option<TokenPair> =
+            open_url(hybrid_flow_code.authorize_url.clone().as_ref()).await;
 
         match auth_code {
             Some(token_pair) => {
@@ -110,6 +114,7 @@ impl InteractiveBrowserCredential {
                         .clone();
                     });
 
+                let _ = decode_id_token(token_pair.id_token.clone());
                 return acc;
             }
             None => {
@@ -142,6 +147,19 @@ fn ensure_default_scopes<'a>(scopes: &'a [&'a str]) -> Vec<&'a str> {
 
     result
 }
+
+fn decode_id_token(id_token_encoded: String) -> Result<(), Box<dyn std::error::Error>> {
+    let parts: Vec<&str> = id_token_encoded.split('.').collect();
+
+    //decode base64
+    let a = general_purpose::URL_SAFE_NO_PAD.decode(parts[1])?;
+
+    let id_token_decoded: serde_json::Value = serde_json::from_slice(&a)?;
+
+    info!("id_token decoded: {:#?}", id_token_decoded);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
