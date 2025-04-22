@@ -152,11 +152,21 @@ fn decode_id_token(id_token_encoded: String) -> Result<(), Box<dyn std::error::E
     let parts: Vec<&str> = id_token_encoded.split('.').collect();
 
     //decode base64
-    let a = general_purpose::URL_SAFE_NO_PAD.decode(parts[1])?;
+    let id_token_decoded = general_purpose::URL_SAFE_NO_PAD.decode(parts[1])?;
 
-    let id_token_decoded: serde_json::Value = serde_json::from_slice(&a)?;
+    let id_token_json: serde_json::Value = serde_json::from_slice(&id_token_decoded)?;
+
+    //get the 'oid': https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
+    let id_token_oid = id_token_json["oid"].as_str();
+    let id_token_sub = id_token_json["sub"].as_str();
 
     info!("id_token decoded: {:#?}", id_token_decoded);
+
+    info!(
+        "id_token_oid: {:#?} , id_token_sub: {:#?}",
+        id_token_oid, id_token_sub
+    );
+
     Ok(())
 }
 
