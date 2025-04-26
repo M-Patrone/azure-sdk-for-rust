@@ -78,6 +78,21 @@ impl InteractiveBrowserCredential {
         })
     }
 
+    async fn get_auth_token(&self, scopes: &[&str]) -> hybrid_flow::AuthorizationCodeFlow {
+        let verified_scopes = ensure_default_scopes(scopes);
+
+        let options = self.options.clone();
+
+        let hybrid_flow_code = hybrid_flow::authorize(
+            ClientId::new(options.client_id.unwrap().clone()),
+            None,
+            &options.tenant_id.unwrap().clone(),
+            options.redirect_url.unwrap().clone(),
+            &verified_scopes,
+        );
+        hybrid_flow_code
+    }
+
     /// Starts the interactive browser authentication flow and returns an access token.
     ///
     /// If no scopes are provided, default scopes will be used.
@@ -85,6 +100,7 @@ impl InteractiveBrowserCredential {
     async fn get_token(
         &self,
         scopes: &[&str],
+        hybrid_flow_code: hybrid_flow::AuthorizationCodeFlow,
     ) -> azure_core::Result<(AccessToken, String, String)> {
         let verified_scopes = ensure_default_scopes(scopes);
 
@@ -137,6 +153,8 @@ impl InteractiveBrowserCredential {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl TokenCredential for InteractiveBrowserCredential {
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
+        let hybrid_flow_code = self.get_auth_token(scopes).await;
+
         //TODO: extract authorize method to get the oid, tid to tranfer to cache
         let token_res: azure_core::Result<(AccessToken, String, String)> = self
             .cache
@@ -144,7 +162,7 @@ impl TokenCredential for InteractiveBrowserCredential {
                 scopes,
                 "".to_string(),
                 "".to_string(),
-                self.get_token(scopes),
+                self.get_token(scopes, hybrid_flow_code),
             )
             .await;
         let acc_token: azure_core::Result<AccessToken> =
