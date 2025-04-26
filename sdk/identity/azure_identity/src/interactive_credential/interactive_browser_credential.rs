@@ -99,21 +99,8 @@ impl InteractiveBrowserCredential {
     #[allow(dead_code)]
     async fn get_token(
         &self,
-        scopes: &[&str],
         hybrid_flow_code: hybrid_flow::AuthorizationCodeFlow,
     ) -> azure_core::Result<(AccessToken, String, String)> {
-        let verified_scopes = ensure_default_scopes(scopes);
-
-        let options = self.options.clone();
-
-        let hybrid_flow_code = hybrid_flow::authorize(
-            ClientId::new(options.client_id.unwrap().clone()),
-            None,
-            &options.tenant_id.unwrap().clone(),
-            options.redirect_url.unwrap().clone(),
-            &verified_scopes,
-        );
-
         let auth_code: Option<TokenPair> =
             open_url(hybrid_flow_code.authorize_url.clone().as_ref()).await;
 
@@ -162,7 +149,7 @@ impl TokenCredential for InteractiveBrowserCredential {
                 scopes,
                 "".to_string(),
                 "".to_string(),
-                self.get_token(scopes, hybrid_flow_code),
+                self.get_token(hybrid_flow_code),
             )
             .await;
         let acc_token: azure_core::Result<AccessToken> =
