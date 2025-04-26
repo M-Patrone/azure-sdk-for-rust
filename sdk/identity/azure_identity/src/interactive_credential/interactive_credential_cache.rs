@@ -10,12 +10,18 @@ use tracing::trace;
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct IdTokenCache {
     pub oid: String,
-    pub sub: String,
-    pub scopes: String,
+    pub tid: String,
+    pub scopes: Vec<String>,
+}
+
+impl IdTokenCache {
+    fn new(oid: String, tid: String, scopes: Vec<String>) -> Self {
+        IdTokenCache { oid, tid, scopes }
+    }
 }
 
 #[derive(Debug)]
-pub(crate) struct TokenCache(RwLock<HashMap<Vec<IdTokenCache>, AccessToken>>);
+pub(crate) struct TokenCache(RwLock<HashMap<IdTokenCache, AccessToken>>);
 
 impl TokenCache {
     pub(crate) fn new() -> Self {
@@ -32,15 +38,24 @@ impl TokenCache {
     pub(crate) async fn get_token(
         &self,
         scopes: &[&str],
-        callback: impl Future<Output = azure_core::Result<AccessToken>>,
-    ) -> azure_core::Result<AccessToken> {
+        oid: String,
+        tid: String,
+        callback: impl Future<Output = azure_core::Result<(AccessToken, String, String)>>,
+    ) -> azure_core::Result<(AccessToken, String, String)> {
         // if the current cached token for this resource is good, return it.
         let token_cache = self.0.read().await;
         let scopes = scopes.iter().map(ToString::to_string).collect::<Vec<_>>();
-        if let Some(token) = token_cache.get(&scopes) {
+
+        let id_token_cache = IdTokenCache::new(oid, tid, scopes.clone());
+
+        if let Some(token) = token_cache.get(&id_token_cache) {
             if !token.is_expired(None) {
                 trace!("returning cached token");
-                return Ok(token.clone());
+                return Ok((
+                    token.clone(),
+                    id_token_cache.oid.clone(),
+                    id_token_cache.tid.clone(),
+                ));
             }
         }
 
@@ -50,22 +65,28 @@ impl TokenCache {
 
         // check again in case another thread refreshed the token while we were
         // waiting on the write lock
-        if let Some(token) = token_cache.get(&scopes) {
+        if let Some(token) = token_cache.get(&id_token_cache) {
             if !token.is_expired(None) {
                 trace!("returning token that was updated while waiting on write lock");
-                return Ok(token.clone());
+                return Ok((
+                    token.clone(),
+                    id_token_cache.oid.clone(),
+                    id_token_cache.tid.clone(),
+                ));
             }
         }
 
         trace!("falling back to callback");
         let token = callback.await?;
+        let new_id_token_cache =
+            IdTokenCache::new(token.1.clone(), token.2.clone(), scopes.clone());
 
         // NOTE: we do not check to see if the token is expired here, as at
         // least one credential, `AzureCliCredential`, specifies the token is
         // immediately expired after it is returned, which indicates the token
         // should always be refreshed upon use.
-        token_cache.insert(scopes, token.clone());
-        Ok(token)
+        token_cache.insert(new_id_token_cache, token.0.clone());
+        Ok((token.0, token.1.clone(), token.2.clone()))
     }
 }
 
@@ -96,7 +117,10 @@ mod tests {
             }
         }
 
-        async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
+        async fn get_token(
+            &self,
+            scopes: &[&str],
+        ) -> azure_core::Result<(AccessToken, String, String)> {
             // Include an incrementing counter in the token to track how many times the token has been refreshed
             let mut call_count = self.get_token_call_count.lock().unwrap();
             *call_count += 1;

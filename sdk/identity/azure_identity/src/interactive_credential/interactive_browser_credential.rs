@@ -1,5 +1,5 @@
+use super::interactive_credential_cache::*;
 use super::internal_server::*;
-use crate::cache::TokenCache;
 use crate::hybrid_flow;
 use azure_core::credentials::TokenCredential;
 use azure_core::{
@@ -82,7 +82,10 @@ impl InteractiveBrowserCredential {
     ///
     /// If no scopes are provided, default scopes will be used.
     #[allow(dead_code)]
-    async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
+    async fn get_token(
+        &self,
+        scopes: &[&str],
+    ) -> azure_core::Result<(AccessToken, String, String)> {
         let verified_scopes = ensure_default_scopes(scopes);
 
         let options = self.options.clone();
@@ -114,8 +117,12 @@ impl InteractiveBrowserCredential {
                         .clone();
                     });
 
-                let _ = decode_id_token(token_pair.id_token.clone());
-                return acc;
+                let decoded_id_token: Result<(String, String), Error> =
+                    decode_id_token(token_pair.id_token.clone());
+                return match decoded_id_token {
+                    Ok((oid, tid)) => Ok((acc?, oid, tid)),
+                    Err(e) => Err(e),
+                };
             }
             None => {
                 return Err(Error::message(
@@ -130,7 +137,21 @@ impl InteractiveBrowserCredential {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl TokenCredential for InteractiveBrowserCredential {
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
-        self.cache.get_token(scopes, self.get_token(scopes)).await
+        //TODO: extract authorize method to get the oid, tid to tranfer to cache
+        let token_res: azure_core::Result<(AccessToken, String, String)> = self
+            .cache
+            .get_token(
+                scopes,
+                "".to_string(),
+                "".to_string(),
+                self.get_token(scopes),
+            )
+            .await;
+        let acc_token: azure_core::Result<AccessToken> =
+            token_res.map(|(acc, _, _)| acc).map_err(|_| {
+                Error::message(ErrorKind::Other, "Failed to decode id token.".to_string())
+            });
+        return acc_token;
     }
 }
 
@@ -148,7 +169,7 @@ fn ensure_default_scopes<'a>(scopes: &'a [&'a str]) -> Vec<&'a str> {
     result
 }
 
-fn decode_id_token(id_token_encoded: String) -> Result<(), Box<dyn std::error::Error>> {
+fn decode_id_token(id_token_encoded: String) -> Result<(String, String), azure_core::Error> {
     let parts: Vec<&str> = id_token_encoded.split('.').collect();
 
     //decode base64
@@ -158,16 +179,26 @@ fn decode_id_token(id_token_encoded: String) -> Result<(), Box<dyn std::error::E
 
     //get the 'oid': https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
     let id_token_oid = id_token_json["oid"].as_str();
-    let id_token_sub = id_token_json["sub"].as_str();
+    let id_token_tid = id_token_json["tid"].as_str();
 
     info!("id_token decoded: {:#?}", id_token_decoded);
 
     info!(
         "id_token_oid: {:#?} , id_token_sub: {:#?}",
-        id_token_oid, id_token_sub
+        id_token_oid, id_token_tid
     );
 
-    Ok(())
+    match (id_token_oid, id_token_tid) {
+        (Some(id_token_oid), Some(id_token_tid)) => {
+            return Ok((id_token_oid.to_string(), id_token_tid.to_string()));
+        }
+        _ => {
+            return Err(Error::message(
+                ErrorKind::Other,
+                "Failed to retrieve authorization code.".to_string(),
+            ));
+        }
+    }
 }
 
 #[cfg(test)]
