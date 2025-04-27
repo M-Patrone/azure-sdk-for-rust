@@ -92,7 +92,6 @@ impl InteractiveBrowserCredential {
         );
         hybrid_flow_code
     }
-
     /// Starts the interactive browser authentication flow and returns an access token.
     ///
     /// If no scopes are provided, default scopes will be used.
