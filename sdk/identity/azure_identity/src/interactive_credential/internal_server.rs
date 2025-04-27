@@ -34,7 +34,7 @@ pub async fn open_url(url: &str) -> Option<TokenPair> {
         Ok(spawned_ok) => {
             //Could open the browser
             if spawned_ok.stdout.len() > 0 && spawned_ok.stderr.len() == 0 {
-                return handle_browser_command(spawned_ok);
+                return handle_browser_command();
             }
         }
         Err(e) => {
@@ -65,7 +65,7 @@ pub async fn open_url(url: &str) -> Option<TokenPair> {
         Ok(spawned_ok) => {
             //Could open the browser
             if spawned_ok.stdout.len() > 0 && spawned_ok.stderr.len() == 0 {
-                return handle_browser_command(spawned_ok);
+                return handle_browser_command();
             }
         }
         Err(e) => {
@@ -91,21 +91,23 @@ pub async fn open_url(url: &str) -> Option<TokenPair> {
         let command_ostr = OsStr::new(&command);
         let args: &[&OsStr] = &[OsStr::new(url)];
 
-        let spawned = executor.run(command_ostr, args).await;
-
+        //TODO: remove debug to manually open url
+        //let spawned = executor.run(command_ostr, args).await;
+        let spawned: Result<Output, &str> = Err("DEBUG ERRROR");
         match spawned {
             Ok(spawned_ok) => {
                 //Could not open the browser
                 if spawned_ok.stdout.len() == 0 && spawned_ok.stderr.len() > 0 {
                     info!("Open the following link manually in your browser: {url}");
                 }
-                return handle_browser_command(spawned_ok);
             }
             Err(e) => {
                 info!("Open the following link manually in your browser: {url}");
                 error!("Failed to start browser command: {e}");
             }
         }
+
+        return handle_browser_command();
     }
 
     info!("Open the following link manually in your browser: {url}");
@@ -156,7 +158,7 @@ async fn find_linux_browser_command() -> Option<String> {
 /// starting the browser if the browser could be started, then the webserver should be started to
 /// get the auth code
 #[allow(dead_code)]
-fn handle_browser_command(result: Output) -> Option<TokenPair> {
+fn handle_browser_command() -> Option<TokenPair> {
     start_webserver()
 }
 
