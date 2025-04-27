@@ -200,17 +200,21 @@ fn decode_id_token(id_token_encoded: String) -> Result<(String, String), azure_c
     let id_token_json: serde_json::Value = serde_json::from_slice(&id_token_decoded)?;
 
     //get the 'oid': https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
-    let id_token_oid = id_token_json["oid"].as_str();
+
+    let id_token_oid_sub = id_token_json
+        .get("oid")
+        .and_then(|v| v.as_str())
+        .or_else(|| id_token_json.get("sub").and_then(|v| v.as_str()));
     let id_token_tid = id_token_json["tid"].as_str();
 
     info!(
-        "id_token_oid: {:#?} , id_token_sub: {:#?}",
-        id_token_oid, id_token_tid
+        "id_token_oid_sub: {:#?} , id_token_tid: {:#?}",
+        id_token_oid_sub, id_token_tid
     );
 
-    match (id_token_oid, id_token_tid) {
-        (Some(id_token_oid), Some(id_token_tid)) => {
-            return Ok((id_token_oid.to_string(), id_token_tid.to_string()));
+    match (id_token_oid_sub, id_token_tid) {
+        (Some(id_token_oid_sub), Some(id_token_tid)) => {
+            return Ok((id_token_oid_sub.to_string(), id_token_tid.to_string()));
         }
         _ => {
             return Err(Error::message(
