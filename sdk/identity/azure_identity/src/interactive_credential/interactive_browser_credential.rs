@@ -78,8 +78,13 @@ impl InteractiveBrowserCredential {
         })
     }
 
-    async fn get_auth_token(&self, scopes: &[&str]) -> hybrid_flow::AuthorizationCodeFlow {
+    async fn get_auth_token(
+        &self,
+        scopes: &[&str],
+    ) -> (hybrid_flow::AuthorizationCodeFlow, Option<TokenPair>) {
         let verified_scopes = ensure_default_scopes(scopes);
+
+        info!("verified scopes: {:#?}", verified_scopes);
 
         let options = self.options.clone();
 
@@ -90,48 +95,40 @@ impl InteractiveBrowserCredential {
             options.redirect_url.unwrap().clone(),
             &verified_scopes,
         );
-        hybrid_flow_code
+
+        let auth_code: Option<TokenPair> =
+            open_url(hybrid_flow_code.authorize_url.clone().as_ref()).await;
+
+        (hybrid_flow_code, auth_code)
     }
     /// Starts the interactive browser authentication flow and returns an access token.
     ///
     /// If no scopes are provided, default scopes will be used.
     #[allow(dead_code)]
-    async fn get_token(
+    async fn get_access_token(
         &self,
         hybrid_flow_code: hybrid_flow::AuthorizationCodeFlow,
+        token_pair: TokenPair,
     ) -> azure_core::Result<(AccessToken, String, String)> {
-        let auth_code: Option<TokenPair> =
-            open_url(hybrid_flow_code.authorize_url.clone().as_ref()).await;
+        let acc = hybrid_flow_code
+            .exchange(
+                new_http_client(),
+                AuthorizationCode::new(token_pair.auth_code).clone(),
+            )
+            .await
+            .map(|r| {
+                return AccessToken::new(
+                    r.access_token().secret().clone(),
+                    OffsetDateTime::now_utc() + r.expires_in().unwrap().clone(),
+                )
+                .clone();
+            });
 
-        match auth_code {
-            Some(token_pair) => {
-                let acc = hybrid_flow_code
-                    .exchange(
-                        new_http_client(),
-                        AuthorizationCode::new(token_pair.auth_code).clone(),
-                    )
-                    .await
-                    .map(|r| {
-                        return AccessToken::new(
-                            r.access_token().secret().clone(),
-                            OffsetDateTime::now_utc() + r.expires_in().unwrap().clone(),
-                        )
-                        .clone();
-                    });
-
-                let decoded_id_token: Result<(String, String), Error> =
-                    decode_id_token(token_pair.id_token.clone());
-                return match decoded_id_token {
-                    Ok((oid, tid)) => Ok((acc?, oid, tid)),
-                    Err(e) => Err(e),
-                };
-            }
-            None => {
-                return Err(Error::message(
-                    ErrorKind::Other,
-                    "Failed to retrieve authorization code.".to_string(),
-                ))
-            }
+        let decoded_id_token: Result<(String, String), Error> =
+            decode_id_token(token_pair.id_token.clone());
+        return match decoded_id_token {
+            Ok((oid, tid)) => Ok((acc?, oid, tid)),
+            Err(e) => Err(e),
         };
     }
 }
@@ -140,22 +137,43 @@ impl InteractiveBrowserCredential {
 impl TokenCredential for InteractiveBrowserCredential {
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
         let hybrid_flow_code = self.get_auth_token(scopes).await;
+        match hybrid_flow_code {
+            (hybrid_flow_code, Some(token_pair)) => {
+                let decoded_id_token: Result<(String, String), Error> =
+                    decode_id_token(token_pair.id_token.clone());
 
-        //TODO: extract authorize method to get the oid, tid to tranfer to cache
-        let token_res: azure_core::Result<(AccessToken, String, String)> = self
-            .cache
-            .get_token(
-                scopes,
-                "".to_string(),
-                "".to_string(),
-                self.get_token(hybrid_flow_code),
-            )
-            .await;
-        let acc_token: azure_core::Result<AccessToken> =
-            token_res.map(|(acc, _, _)| acc).map_err(|_| {
-                Error::message(ErrorKind::Other, "Failed to decode id token.".to_string())
-            });
-        return acc_token;
+                if let Ok((oid, tid)) = decoded_id_token {
+                    //TODO: extract authorize method to get the oid, tid to tranfer to cache
+                    let token_res: azure_core::Result<(AccessToken, String, String)> = self
+                        .cache
+                        .get_token(
+                            scopes,
+                            oid.clone(),
+                            tid.clone(),
+                            self.get_access_token(hybrid_flow_code, token_pair),
+                        )
+                        .await;
+                    let acc_token: azure_core::Result<AccessToken> =
+                        token_res.map(|(acc, _, _)| acc).map_err(|_| {
+                            Error::message(
+                                ErrorKind::Other,
+                                "Failed to decode id token.".to_string(),
+                            )
+                        });
+                    return acc_token;
+                }
+                return Err(Error::message(
+                    ErrorKind::Other,
+                    "Could not get the authorization.".to_string(),
+                ));
+            }
+            _ => {
+                return Err(Error::message(
+                    ErrorKind::Other,
+                    "Could not get the authorization.".to_string(),
+                ))
+            }
+        }
     }
 }
 
@@ -184,8 +202,6 @@ fn decode_id_token(id_token_encoded: String) -> Result<(String, String), azure_c
     //get the 'oid': https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
     let id_token_oid = id_token_json["oid"].as_str();
     let id_token_tid = id_token_json["tid"].as_str();
-
-    info!("id_token decoded: {:#?}", id_token_decoded);
 
     info!(
         "id_token_oid: {:#?} , id_token_sub: {:#?}",
