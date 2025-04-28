@@ -28,7 +28,7 @@ pub fn authorize(
     tenant_id: &str,
     redirect_url: Url,
     scopes: &[&str],
-) -> AuthorizationCodeFlow {
+) -> HybridAuthCodeFlow {
     let auth_url = oauth2::AuthUrl::from_url(
         Url::parse(&format!(
             "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
@@ -61,23 +61,24 @@ pub fn authorize(
 
     let scopes = scopes.iter().map(ToString::to_string).map(Scope::new);
 
+    let nonce = oauth2::CsrfToken::new_random();
+
     // Generate the authorization URL to which we'll redirect the user.
+    //https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
     let (authorize_url, csrf_state) = client
         .authorize_url(oauth2::CsrfToken::new_random)
         .add_scopes(scopes)
         .set_pkce_challenge(pkce_code_challenge)
+        .set_response_type(&oauth2::ResponseType::new("code id_token".to_string()))
+        .add_extra_param("response_mode", "form_post")
+        .add_extra_param("nonce", nonce.secret().to_string())
         .url();
-
+    //TODO: implement verify nonce!!
     let url_string: String = format!("{}", authorize_url.as_str().to_string());
-    //https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
-    let url_replaced = url_string.replace(
-        "response_type=code",
-        "response_type=code id_token&response_mode=form_post&nonce=abcde",
-    );
 
-    let authorize_url = Url::from_str(&url_replaced).unwrap();
+    let authorize_url = Url::from_str(&url_string).unwrap();
 
-    AuthorizationCodeFlow {
+    HybridAuthCodeFlow {
         client,
         authorize_url,
         csrf_state,
@@ -85,9 +86,9 @@ pub fn authorize(
     }
 }
 
-/// An object representing an OAuth 2.0 authorization code flow.
+/// An object representing an hybrid code flow.
 #[derive(Debug)]
-pub struct AuthorizationCodeFlow {
+pub struct HybridAuthCodeFlow {
     /// An HTTP client configured for OAuth2 authentication
     pub client:
         BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
@@ -100,7 +101,7 @@ pub struct AuthorizationCodeFlow {
 }
 
 #[allow(dead_code)]
-impl AuthorizationCodeFlow {
+impl HybridAuthCodeFlow {
     /// Exchange an authorization code for a token.
     pub async fn exchange(
         self,
