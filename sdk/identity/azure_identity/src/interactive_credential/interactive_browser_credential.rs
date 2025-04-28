@@ -207,10 +207,10 @@ fn decode_id_token(id_token_encoded: String) -> Result<(String, String), azure_c
         .and_then(|v| v.as_str())
         .or_else(|| id_token_json.get("sub").and_then(|v| v.as_str()));
     let id_token_tid = id_token_json["tid"].as_str();
-
+    let id_token_nonce = id_token_json["nonce"].as_str();
     info!(
-        "id_token_oid_sub: {:#?} , id_token_tid: {:#?}",
-        id_token_oid_sub, id_token_tid
+        "id_token_oid_sub: {:#?} , id_token_tid: {:#?}, nonce: {:#?}",
+        id_token_oid_sub, id_token_tid, id_token_nonce
     );
 
     match (id_token_oid_sub, id_token_tid) {

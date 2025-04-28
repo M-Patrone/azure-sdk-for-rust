@@ -61,7 +61,7 @@ pub fn authorize(
 
     let scopes = scopes.iter().map(ToString::to_string).map(Scope::new);
 
-    let nonce = oauth2::CsrfToken::new_random();
+    let nonce: String = oauth2::CsrfToken::new_random().secret().to_string();
 
     // Generate the authorization URL to which we'll redirect the user.
     //https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow
@@ -71,7 +71,7 @@ pub fn authorize(
         .set_pkce_challenge(pkce_code_challenge)
         .set_response_type(&oauth2::ResponseType::new("code id_token".to_string()))
         .add_extra_param("response_mode", "form_post")
-        .add_extra_param("nonce", nonce.secret().to_string())
+        .add_extra_param("nonce", &nonce)
         .url();
     //TODO: implement verify nonce!!
     let url_string: String = format!("{}", authorize_url.as_str().to_string());
@@ -83,6 +83,7 @@ pub fn authorize(
         authorize_url,
         csrf_state,
         pkce_code_verifier,
+        nonce,
     }
 }
 
@@ -98,8 +99,9 @@ pub struct HybridAuthCodeFlow {
     pub csrf_state: oauth2::CsrfToken,
     /// The PKCE code verifier
     pub pkce_code_verifier: oauth2::PkceCodeVerifier,
-    // The nonce to check
-    pub nonce: String,
+    // The nonce
+    // Openconnect: https://openid.net/specs/openid-connect-core-1_0.html#IDToken
+    nonce: String,
 }
 
 #[allow(dead_code)]
@@ -135,5 +137,10 @@ impl HybridAuthCodeFlow {
                 ErrorKind::Credential,
                 "exchanging an authorization code for a token failed",
             )
+    }
+
+    // validate the received nonce from the `id_token` with the send one
+    pub fn validate_received_nonce(&self, nonce_received: String) -> bool {
+        self.nonce.eq(&nonce_received)
     }
 }
