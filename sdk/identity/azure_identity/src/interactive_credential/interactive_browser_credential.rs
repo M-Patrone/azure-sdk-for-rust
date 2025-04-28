@@ -1,6 +1,6 @@
+use super::hybrid_flow;
 use super::interactive_credential_cache::*;
 use super::internal_server::*;
-use crate::hybrid_flow;
 use azure_core::credentials::TokenCredential;
 use azure_core::{
     credentials::AccessToken,

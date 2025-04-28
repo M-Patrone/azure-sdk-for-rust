@@ -10,7 +10,6 @@ mod chained_token_credential;
 mod credentials;
 mod env;
 mod federated_credentials_flow;
-mod hybrid_flow;
 mod interactive_credential;
 mod oauth2_http_client;
 mod refresh_token;
