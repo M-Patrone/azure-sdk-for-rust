@@ -98,6 +98,8 @@ pub struct HybridAuthCodeFlow {
     pub csrf_state: oauth2::CsrfToken,
     /// The PKCE code verifier
     pub pkce_code_verifier: oauth2::PkceCodeVerifier,
+    // The nonce to check
+    pub nonce: String,
 }
 
 #[allow(dead_code)]
