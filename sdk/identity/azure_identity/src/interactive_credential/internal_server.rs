@@ -1,12 +1,12 @@
 use base64::engine::general_purpose;
 use base64::Engine;
 
+use azure_core::{error::ErrorKind, Error};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::process::Output;
 use std::time::Duration;
 use tracing::{error, info};
-
 ///The port where the local server is listening on the auth_code
 #[allow(dead_code)]
 pub const LOCAL_SERVER_PORT: u16 = 47828;
@@ -263,28 +263,40 @@ fn extract_auth_information(body_str: &str) -> Option<HybridAuthContext> {
 
     let code = parsed.get("code").cloned();
     let id_token = parsed.get("id_token").cloned();
-    let token_pair: Option<HybridAuthContext> = match (code, id_token) {
-        (Some(auth_code), Some(id_token)) => Some(HybridAuthContext {
-            id_token,
-            auth_code,
-        }),
+    let auth_context: Option<HybridAuthContext> = match (code, id_token) {
+        (Some(auth_code), Some(id_token)) => {
+            let nonce = decode_id_token(&id_token, "nonce");
+            let oid_sub =
+                decode_id_token(&id_token, "oid").or_else(|| decode_id_token(&id_token, "sub"));
+            let tid = decode_id_token(&id_token, "tid");
+            match (nonce, oid_sub, tid) {
+                (Some(nonce), Some(oid_sub), Some(tid)) => Some(HybridAuthContext {
+                    raw_id_token: id_token,
+                    auth_code,
+                    nonce,
+                    oid_sub,
+                    tid,
+                }),
+                _ => None,
+            }
+        }
         _ => None,
     };
 
-    info!("token_pair information: {:#?}", token_pair);
-    token_pair
+    info!("HybridAuthContext information: {:#?}", auth_context);
+    auth_context
 }
 
-fn decode_id_token(
-    id_token_encoded: String,
-    search_property: &str,
-) -> Result<String, azure_core::Error> {
+///method to decode the `id_token`
+///
+///pass the `id_token` and the search property
+fn decode_id_token(id_token_encoded: &str, search_property: &str) -> Option<String> {
     let parts: Vec<&str> = id_token_encoded.split('.').collect();
 
     //decode base64
-    let id_token_decoded = general_purpose::URL_SAFE_NO_PAD.decode(parts[1])?;
+    let id_token_decoded = general_purpose::URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
 
-    let id_token_json: serde_json::Value = serde_json::from_slice(&id_token_decoded)?;
+    let id_token_json: serde_json::Value = serde_json::from_slice(&id_token_decoded).ok()?;
 
     let id_token_decoded_val = id_token_json[search_property].as_str();
     info!(
@@ -292,17 +304,7 @@ fn decode_id_token(
         &search_property, id_token_decoded_val
     );
 
-    match id_token_decoded_val {
-        Some(decoded_val) => {
-            return Ok(decoded_val.to_string());
-        }
-        _ => {
-            return Err(Error::message(
-                ErrorKind::Other,
-                "Failed to retrieve authorization code.".to_string(),
-            ));
-        }
-    }
+    id_token_decoded_val.map(|s| s.to_string())
 }
 
 /// Extracts the `code` query parameter from the request.
