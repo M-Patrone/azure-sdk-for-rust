@@ -15,7 +15,6 @@ use azure_core::{
 use oauth2::{basic::BasicClient, EndpointNotSet, EndpointSet, HttpRequest, Scope};
 use oauth2::{ClientId, ClientSecret};
 use std::{str::FromStr, sync::Arc};
-use tracing::info;
 
 /// Start an hybrid flow.
 ///

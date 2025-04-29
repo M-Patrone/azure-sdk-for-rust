@@ -1,5 +1,4 @@
 use super::hybrid_flow;
-use super::hybrid_flow::HybridAuthCodeFlow;
 use super::interactive_credential_cache::*;
 use super::internal_server::*;
 use azure_core::credentials::TokenCredential;
@@ -127,6 +126,7 @@ impl InteractiveBrowserCredential {
 
         let decoded_id_token: Result<(String, String), Error> =
             decode_id_token(token_pair.id_token.clone());
+
         return match decoded_id_token {
             Ok((oid, tid)) => Ok((acc?, oid, tid)),
             Err(e) => Err(e),

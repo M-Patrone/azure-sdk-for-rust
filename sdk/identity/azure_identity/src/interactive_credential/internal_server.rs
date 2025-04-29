@@ -1,3 +1,6 @@
+use base64::engine::general_purpose;
+use base64::Engine;
+
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::process::Output;
@@ -8,17 +11,21 @@ use tracing::{error, info};
 #[allow(dead_code)]
 pub const LOCAL_SERVER_PORT: u16 = 47828;
 
+///saves the id_token most important claim to enable caching and also to check the `nonce`
 #[derive(Debug)]
-pub struct TokenPair {
+pub struct HybridAuthContext {
     pub auth_code: String,
-    pub id_token: String,
+    pub raw_id_token: String,
+    oid_sub: String,
+    tid: String,
+    nonce: String,
 }
 
 /// Opens the given URL in the default system browser and starts a local web server
 /// to receive the authorization code.
 #[allow(dead_code)]
 #[cfg(target_os = "windows")]
-pub async fn open_url(url: &str) -> Option<TokenPair> {
+pub async fn open_url(url: &str) -> Option<HybridAuthContext> {
     use azure_core::process::{new_executor, Executor};
     use std::{ffi::OsStr, sync::Arc};
 
@@ -49,7 +56,7 @@ pub async fn open_url(url: &str) -> Option<TokenPair> {
 /// to receive the authorization code.
 #[allow(dead_code)]
 #[cfg(target_os = "macos")]
-pub async fn open_url(url: &str) -> Option<TokenPair> {
+pub async fn open_url(url: &str) -> Option<HybridAuthContext> {
     use azure_core::process::{new_executor, Executor};
     use std::{ffi::OsStr, sync::Arc};
 
@@ -80,7 +87,7 @@ pub async fn open_url(url: &str) -> Option<TokenPair> {
 /// to receive the authorization code.
 #[allow(dead_code)]
 #[cfg(target_os = "linux")]
-pub async fn open_url(url: &str) -> Option<TokenPair> {
+pub async fn open_url(url: &str) -> Option<HybridAuthContext> {
     use azure_core::process::{new_executor, Executor};
     use std::{ffi::OsStr, sync::Arc};
 
@@ -158,7 +165,7 @@ async fn find_linux_browser_command() -> Option<String> {
 /// starting the browser if the browser could be started, then the webserver should be started to
 /// get the auth code
 #[allow(dead_code)]
-fn handle_browser_command() -> Option<TokenPair> {
+fn handle_browser_command() -> Option<HybridAuthContext> {
     start_webserver()
 }
 
@@ -166,7 +173,7 @@ fn handle_browser_command() -> Option<TokenPair> {
 /// started
 #[allow(dead_code)]
 /// Starts a simple HTTP server on localhost to receive the auth code.
-fn start_webserver() -> Option<TokenPair> {
+fn start_webserver() -> Option<HybridAuthContext> {
     info!("starting webserver");
     let res = TcpListener::bind(("127.0.0.1", LOCAL_SERVER_PORT))
         .ok()
@@ -175,7 +182,7 @@ fn start_webserver() -> Option<TokenPair> {
     res
 }
 
-fn handle_tcp_connection(listener: TcpListener) -> Option<TokenPair> {
+fn handle_tcp_connection(listener: TcpListener) -> Option<HybridAuthContext> {
     info!("HANDLING TCP CONNECTION");
     listener
         .incoming()
@@ -189,7 +196,7 @@ fn handle_tcp_connection(listener: TcpListener) -> Option<TokenPair> {
 /// if the stream could be opened, we read the whole request and try to extract the auth_code
 /// Returns also the html code to show if it worked
 #[allow(dead_code)]
-fn handle_client(mut stream: TcpStream) -> Option<TokenPair> {
+fn handle_client(mut stream: TcpStream) -> Option<HybridAuthContext> {
     info!("HANDLING CLIENT");
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
@@ -249,15 +256,15 @@ fn handle_client(mut stream: TcpStream) -> Option<TokenPair> {
     res_auth
 }
 
-fn extract_auth_information(body_str: &str) -> Option<TokenPair> {
+fn extract_auth_information(body_str: &str) -> Option<HybridAuthContext> {
     let parsed: std::collections::HashMap<_, _> = url::form_urlencoded::parse(body_str.as_bytes())
         .into_owned()
         .collect();
 
     let code = parsed.get("code").cloned();
     let id_token = parsed.get("id_token").cloned();
-    let token_pair: Option<TokenPair> = match (code, id_token) {
-        (Some(auth_code), Some(id_token)) => Some(TokenPair {
+    let token_pair: Option<HybridAuthContext> = match (code, id_token) {
+        (Some(auth_code), Some(id_token)) => Some(HybridAuthContext {
             id_token,
             auth_code,
         }),
@@ -266,6 +273,36 @@ fn extract_auth_information(body_str: &str) -> Option<TokenPair> {
 
     info!("token_pair information: {:#?}", token_pair);
     token_pair
+}
+
+fn decode_id_token(
+    id_token_encoded: String,
+    search_property: &str,
+) -> Result<String, azure_core::Error> {
+    let parts: Vec<&str> = id_token_encoded.split('.').collect();
+
+    //decode base64
+    let id_token_decoded = general_purpose::URL_SAFE_NO_PAD.decode(parts[1])?;
+
+    let id_token_json: serde_json::Value = serde_json::from_slice(&id_token_decoded)?;
+
+    let id_token_decoded_val = id_token_json[search_property].as_str();
+    info!(
+        "searched value {} with value {:#?}",
+        &search_property, id_token_decoded_val
+    );
+
+    match id_token_decoded_val {
+        Some(decoded_val) => {
+            return Ok(decoded_val.to_string());
+        }
+        _ => {
+            return Err(Error::message(
+                ErrorKind::Other,
+                "Failed to retrieve authorization code.".to_string(),
+            ));
+        }
+    }
 }
 
 /// Extracts the `code` query parameter from the request.
