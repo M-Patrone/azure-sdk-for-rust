@@ -16,9 +16,9 @@ pub const LOCAL_SERVER_PORT: u16 = 47828;
 pub struct HybridAuthContext {
     pub auth_code: String,
     pub raw_id_token: String,
-    oid_sub: String,
-    tid: String,
-    nonce: String,
+    pub oid_sub: String,
+    pub tid: String,
+    pub nonce: String,
 }
 
 /// Opens the given URL in the default system browser and starts a local web server

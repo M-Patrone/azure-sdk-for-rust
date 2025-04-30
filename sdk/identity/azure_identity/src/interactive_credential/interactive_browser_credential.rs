@@ -81,7 +81,7 @@ impl InteractiveBrowserCredential {
     async fn get_auth_token(
         &self,
         scopes: &[&str],
-    ) -> (hybrid_flow::HybridAuthCodeFlow, Option<TokenPair>) {
+    ) -> (hybrid_flow::HybridAuthCodeFlow, Option<HybridAuthContext>) {
         let verified_scopes = ensure_default_scopes(scopes);
 
         info!("verified scopes: {:#?}", verified_scopes);
@@ -96,7 +96,7 @@ impl InteractiveBrowserCredential {
             &verified_scopes,
         );
 
-        let auth_code: Option<TokenPair> =
+        let auth_code: Option<HybridAuthContext> =
             open_url(hybrid_flow_code.authorize_url.clone().as_ref()).await;
 
         (hybrid_flow_code, auth_code)
@@ -108,12 +108,12 @@ impl InteractiveBrowserCredential {
     async fn get_access_token(
         &self,
         hybrid_flow_code: hybrid_flow::HybridAuthCodeFlow,
-        token_pair: TokenPair,
+        auth_context: HybridAuthContext,
     ) -> azure_core::Result<(AccessToken, String, String)> {
         let acc = hybrid_flow_code
             .exchange(
                 new_http_client(),
-                AuthorizationCode::new(token_pair.auth_code).clone(),
+                AuthorizationCode::new(auth_context.auth_code).clone(),
             )
             .await
             .map(|r| {
@@ -124,13 +124,7 @@ impl InteractiveBrowserCredential {
                 .clone();
             });
 
-        let decoded_id_token: Result<(String, String), Error> =
-            decode_id_token(token_pair.id_token.clone());
-
-        return match decoded_id_token {
-            Ok((oid, tid)) => Ok((acc?, oid, tid)),
-            Err(e) => Err(e),
-        };
+        Ok((acc?, auth_context.oid_sub, auth_context.tid))
     }
 }
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
@@ -139,34 +133,24 @@ impl TokenCredential for InteractiveBrowserCredential {
     async fn get_token(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
         let hybrid_flow_code = self.get_auth_token(scopes).await;
         match hybrid_flow_code {
-            (hybrid_flow_code, Some(token_pair)) => {
-                let decoded_id_token: Result<(String, String), Error> =
-                    decode_id_token(token_pair.id_token.clone());
-
-                if let Ok((oid, tid)) = decoded_id_token {
-                    //TODO: extract authorize method to get the oid, tid to tranfer to cache
-                    let token_res: azure_core::Result<(AccessToken, String, String)> = self
-                        .cache
-                        .get_token(
-                            scopes,
-                            oid.clone(),
-                            tid.clone(),
-                            self.get_access_token(hybrid_flow_code, token_pair),
+            (hybrid_flow_code, Some(auth_context)) => {
+                let token_res: azure_core::Result<(AccessToken, String, String)> = self
+                    .cache
+                    .get_token(
+                        scopes,
+                        auth_context.oid_sub.clone(),
+                        auth_context.tid.clone(),
+                        self.get_access_token(hybrid_flow_code, auth_context),
+                    )
+                    .await;
+                let acc_token: azure_core::Result<AccessToken> =
+                    token_res.map(|(acc, _, _)| acc).map_err(|_| {
+                        Error::message(
+                            ErrorKind::Other,
+                            "Failed to get the access token".to_string(),
                         )
-                        .await;
-                    let acc_token: azure_core::Result<AccessToken> =
-                        token_res.map(|(acc, _, _)| acc).map_err(|_| {
-                            Error::message(
-                                ErrorKind::Other,
-                                "Failed to decode id token.".to_string(),
-                            )
-                        });
-                    return acc_token;
-                }
-                return Err(Error::message(
-                    ErrorKind::Other,
-                    "Could not get the authorization.".to_string(),
-                ));
+                    });
+                return acc_token;
             }
             _ => {
                 return Err(Error::message(
@@ -190,40 +174,6 @@ fn ensure_default_scopes<'a>(scopes: &'a [&'a str]) -> Vec<&'a str> {
     }
 
     result
-}
-
-fn decode_id_token(id_token_encoded: String) -> Result<(String, String), azure_core::Error> {
-    let parts: Vec<&str> = id_token_encoded.split('.').collect();
-
-    //decode base64
-    let id_token_decoded = general_purpose::URL_SAFE_NO_PAD.decode(parts[1])?;
-
-    let id_token_json: serde_json::Value = serde_json::from_slice(&id_token_decoded)?;
-
-    //get the 'oid': https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
-
-    let id_token_oid_sub = id_token_json
-        .get("oid")
-        .and_then(|v| v.as_str())
-        .or_else(|| id_token_json.get("sub").and_then(|v| v.as_str()));
-    let id_token_tid = id_token_json["tid"].as_str();
-    let id_token_nonce = id_token_json["nonce"].as_str();
-    info!(
-        "id_token_oid_sub: {:#?} , id_token_tid: {:#?}, nonce: {:#?}",
-        id_token_oid_sub, id_token_tid, id_token_nonce
-    );
-
-    match (id_token_oid_sub, id_token_tid) {
-        (Some(id_token_oid_sub), Some(id_token_tid)) => {
-            return Ok((id_token_oid_sub.to_string(), id_token_tid.to_string()));
-        }
-        _ => {
-            return Err(Error::message(
-                ErrorKind::Other,
-                "Failed to retrieve authorization code.".to_string(),
-            ));
-        }
-    }
 }
 
 #[cfg(test)]
