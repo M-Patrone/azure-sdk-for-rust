@@ -15,6 +15,7 @@ use azure_core::{
 use oauth2::{basic::BasicClient, EndpointNotSet, EndpointSet, HttpRequest, Scope};
 use oauth2::{ClientId, ClientSecret};
 use std::{str::FromStr, sync::Arc};
+use tracing::info;
 
 use super::internal_server::HybridAuthContext;
 
@@ -147,6 +148,10 @@ impl HybridAuthCodeFlow {
     ) -> Option<HybridAuthContext> {
         if let Some(ctx) = auth_context {
             if self.nonce.eq(&ctx.nonce) {
+                info!(
+                    "checking nonce: HybridAuthCodeFlow '{}' and from context: '{}'",
+                    &self.nonce, &ctx.nonce
+                );
                 return Some(ctx);
             }
         }

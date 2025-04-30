@@ -100,7 +100,7 @@ impl InteractiveBrowserCredential {
             open_url(hybrid_flow_code.authorize_url.clone().as_ref()).await;
 
         //validate nonce
-        hybrid_flow_code.validate_received_nonce(auth_code)
+        let auth_code = hybrid_flow_code.validate_received_nonce(auth_code);
 
         (hybrid_flow_code, auth_code)
     }
@@ -137,9 +137,6 @@ impl TokenCredential for InteractiveBrowserCredential {
         let hybrid_flow_code = self.get_auth_token(scopes).await;
         match hybrid_flow_code {
             (hybrid_flow_code, Some(auth_context)) => {
-
-                auth_context.
-
                 let token_res: azure_core::Result<(AccessToken, String, String)> = self
                     .cache
                     .get_token(
