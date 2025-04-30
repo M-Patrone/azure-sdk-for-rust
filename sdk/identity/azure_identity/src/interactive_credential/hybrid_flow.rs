@@ -16,6 +16,8 @@ use oauth2::{basic::BasicClient, EndpointNotSet, EndpointSet, HttpRequest, Scope
 use oauth2::{ClientId, ClientSecret};
 use std::{str::FromStr, sync::Arc};
 
+use super::internal_server::HybridAuthContext;
+
 /// Start an hybrid flow.
 ///
 /// The values for `client_id`, `client_secret`, `tenant_id`, and `redirect_url` can all be found
@@ -139,7 +141,15 @@ impl HybridAuthCodeFlow {
     }
 
     // validate the received nonce from the `id_token` with the send one
-    pub fn validate_received_nonce(&self, nonce_received: String) -> bool {
-        self.nonce.eq(&nonce_received)
+    pub fn validate_received_nonce(
+        &self,
+        auth_context: Option<HybridAuthContext>,
+    ) -> Option<HybridAuthContext> {
+        if let Some(ctx) = auth_context {
+            if self.nonce.eq(&ctx.nonce) {
+                return Some(ctx);
+            }
+        }
+        None
     }
 }
