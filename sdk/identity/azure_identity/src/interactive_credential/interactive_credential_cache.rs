@@ -95,3 +95,105 @@ impl Default for TokenCache {
         TokenCache::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use azure_core::credentials::Secret;
+    use std::{sync::Mutex, time::Duration};
+    use time::OffsetDateTime;
+
+    #[derive(Debug)]
+    struct MockCredential {
+        token: AccessToken,
+        get_token_call_count: Mutex<usize>,
+    }
+
+    impl MockCredential {
+        fn new(token: AccessToken) -> Self {
+            Self {
+                token,
+                get_token_call_count: Mutex::new(0),
+            }
+        }
+
+        async fn get_token(
+            &self,
+            scopes: &[&str],
+        ) -> azure_core::Result<(AccessToken, String, String)> {
+            // Include an incrementing counter in the token to track how many times the token has been refreshed
+            let mut call_count = self.get_token_call_count.lock().unwrap();
+            *call_count += 1;
+            Ok((
+                AccessToken {
+                    token: Secret::new(format!(
+                        "{}-{}:{}",
+                        scopes.join(" "),
+                        self.token.token.secret(),
+                        *call_count
+                    )),
+                    expires_on: self.token.expires_on,
+                },
+                "oid".to_string(),
+                "tid".to_string(),
+            ))
+        }
+    }
+
+    const STORAGE_TOKEN_SCOPE: &str = "https://storage.azure.com/";
+    const IOTHUB_TOKEN_SCOPE: &str = "https://iothubs.azure.net";
+
+    #[tokio::test]
+    async fn test_get_token_different_oid_tid() -> azure_core::Result<()> {
+        let resource1 = &[STORAGE_TOKEN_SCOPE];
+
+        let oid_sub_1 = "00000000-0000-0000-66f3-3332eca7ea81".to_string();
+        let tid_1 = "9122040d-6c67-4c5b-b112-36a304b66dad".to_string();
+        let oid_sub_2 = "10000000-0000-0000-66f3-3332eca7ea89".to_string();
+        let tid_2 = "93420509-6c67-4c5b-b112-36a304b66dad".to_string();
+
+        let secret_string = "test-token";
+        let expires_on = OffsetDateTime::now_utc() + Duration::from_secs(300);
+        let access_token = AccessToken::new(Secret::new(secret_string), expires_on);
+
+        let mock_credential = MockCredential::new(access_token);
+
+        let cache = TokenCache::new();
+
+        // Test that querying a token for the same resource twice returns the same (cached) token on the second call
+        let token1 = cache
+            .get_token(
+                resource1,
+                oid_sub_1,
+                tid_1,
+                mock_credential.get_token(resource1),
+            )
+            .await?;
+        let token2 = cache
+            .get_token(
+                resource1,
+                oid_sub_2,
+                tid_2,
+                mock_credential.get_token(resource1),
+            )
+            .await?;
+
+        let expected_token = format!("{}-{}:1", resource1.join(" "), secret_string);
+        assert_eq!(token1.0.token.secret(), expected_token);
+        assert_eq!(token2.0.token.secret(), expected_token);
+
+        // Test that querying a token for a second resource returns a different token, as the cache is per-resource.
+        // Also test that the same token is the returned (cached) on a second call.
+        let token3 = cache
+            .get_token(resource2, mock_credential.get_token(resource2))
+            .await?;
+        let token4 = cache
+            .get_token(resource2, mock_credential.get_token(resource2))
+            .await?;
+        let expected_token = format!("{}-{}:2", resource2.join(" "), secret_string);
+        assert_eq!(token3.token.secret(), expected_token);
+        assert_eq!(token4.token.secret(), expected_token);
+
+        Ok(())
+    }
+}
