@@ -4,15 +4,51 @@
 use async_lock::RwLock;
 use azure_core::credentials::AccessToken;
 use futures::Future;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+};
 use tracing::trace;
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug)]
 pub struct IdTokenCache {
     pub oid: String,
     pub tid: String,
     pub scopes: Vec<String>,
 }
+
+impl PartialEq for IdTokenCache {
+    fn eq(&self, other: &Self) -> bool {
+        let self_scopes = self
+            .scopes
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let other_scopes = other
+            .scopes
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        self.oid.eq(&other.oid) && self.tid.eq(&other.tid) && self_scopes.eq(&other_scopes)
+    }
+}
+
+impl Hash for IdTokenCache {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let self_scopes = self
+            .scopes
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        self.oid.hash(state);
+        self.tid.hash(state);
+        self_scopes.hash(state);
+    }
+}
+
+impl Eq for IdTokenCache {}
 
 impl IdTokenCache {
     fn new(oid: String, tid: String, scopes: Vec<String>) -> Self {
@@ -120,6 +156,8 @@ mod tests {
         async fn get_token(
             &self,
             scopes: &[&str],
+            oid: String,
+            tid: String,
         ) -> azure_core::Result<(AccessToken, String, String)> {
             // Include an incrementing counter in the token to track how many times the token has been refreshed
             let mut call_count = self.get_token_call_count.lock().unwrap();
@@ -134,8 +172,8 @@ mod tests {
                     )),
                     expires_on: self.token.expires_on,
                 },
-                "oid".to_string(),
-                "tid".to_string(),
+                oid.clone(),
+                tid.clone(),
             ))
         }
     }
@@ -143,12 +181,67 @@ mod tests {
     const STORAGE_TOKEN_SCOPE: &str = "https://storage.azure.com/";
     const IOTHUB_TOKEN_SCOPE: &str = "https://iothubs.azure.net";
 
+    #[test]
+    fn test_id_token_eq() {
+        let oid_sub_1 = "00000000-0000-0000-66f3-3332eca7ea81".to_string();
+        let tid_1 = "9122040d-6c67-4c5b-b112-36a304b66dad".to_string();
+        let resource1 = &[STORAGE_TOKEN_SCOPE];
+        let scopes = resource1
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        let id_token_cache_1 = IdTokenCache::new(oid_sub_1.clone(), tid_1.clone(), scopes.clone());
+        let id_token_cache_2 = IdTokenCache::new(oid_sub_1.clone(), tid_1.clone(), scopes.clone());
+
+        assert_eq!(id_token_cache_1.eq(&id_token_cache_2), true);
+        assert_eq!(std::ptr::eq(&id_token_cache_1, &id_token_cache_2), false);
+    }
+
+    #[test]
+    fn test_id_token_neq_oid() {
+        let oid_sub_1 = "00000000-0000-0000-66f3-3332eca7ea81".to_string();
+        let oid_sub_2 = "10000000-0000-0000-66f3-3332eca7ea81".to_string();
+        let tid_1 = "9122040d-6c67-4c5b-b112-36a304b66dad".to_string();
+        let resource1 = &[STORAGE_TOKEN_SCOPE];
+        let scopes = resource1
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        let id_token_cache_1 = IdTokenCache::new(oid_sub_1.clone(), tid_1.clone(), scopes.clone());
+        let id_token_cache_2 = IdTokenCache::new(oid_sub_2.clone(), tid_1.clone(), scopes.clone());
+
+        assert_eq!(id_token_cache_1.eq(&id_token_cache_2), false);
+        assert_eq!(std::ptr::eq(&id_token_cache_1, &id_token_cache_2), false);
+    }
+
+    #[test]
+    fn test_id_token_neq_tid() {
+        let oid_sub_1 = "00000000-0000-0000-66f3-3332eca7ea81".to_string();
+        let tid_1 = "9122040d-6c67-4c5b-b112-36a304b66dad".to_string();
+        let tid_2 = "1122040d-6c67-4c5b-b112-36a304b66dad".to_string();
+        let resource1 = &[STORAGE_TOKEN_SCOPE];
+        let scopes = resource1
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        let id_token_cache_1 = IdTokenCache::new(oid_sub_1.clone(), tid_1.clone(), scopes.clone());
+        let id_token_cache_2 = IdTokenCache::new(oid_sub_1.clone(), tid_2.clone(), scopes.clone());
+
+        assert_eq!(id_token_cache_1.eq(&id_token_cache_2), false);
+        assert_eq!(std::ptr::eq(&id_token_cache_1, &id_token_cache_2), false);
+    }
+
     #[tokio::test]
     async fn test_get_token_different_oid_tid() -> azure_core::Result<()> {
         let resource1 = &[STORAGE_TOKEN_SCOPE];
 
         let oid_sub_1 = "00000000-0000-0000-66f3-3332eca7ea81".to_string();
         let tid_1 = "9122040d-6c67-4c5b-b112-36a304b66dad".to_string();
+
+        //second account
         let oid_sub_2 = "10000000-0000-0000-66f3-3332eca7ea89".to_string();
         let tid_2 = "93420509-6c67-4c5b-b112-36a304b66dad".to_string();
 
@@ -164,17 +257,17 @@ mod tests {
         let token1 = cache
             .get_token(
                 resource1,
-                oid_sub_1,
-                tid_1,
-                mock_credential.get_token(resource1),
+                oid_sub_1.clone(),
+                tid_1.clone(),
+                mock_credential.get_token(resource1, oid_sub_1.clone(), tid_1.clone()),
             )
             .await?;
         let token2 = cache
             .get_token(
                 resource1,
-                oid_sub_2,
-                tid_2,
-                mock_credential.get_token(resource1),
+                oid_sub_1.clone(),
+                tid_1.clone(),
+                mock_credential.get_token(resource1, oid_sub_1.clone(), tid_1.clone()),
             )
             .await?;
 
@@ -185,14 +278,28 @@ mod tests {
         // Test that querying a token for a second resource returns a different token, as the cache is per-resource.
         // Also test that the same token is the returned (cached) on a second call.
         let token3 = cache
-            .get_token(resource2, mock_credential.get_token(resource2))
+            .get_token(
+                resource1,
+                oid_sub_1.clone(),
+                tid_1.clone(),
+                mock_credential.get_token(resource1, oid_sub_1.clone(), tid_1.clone()),
+            )
             .await?;
         let token4 = cache
-            .get_token(resource2, mock_credential.get_token(resource2))
+            .get_token(
+                resource1,
+                oid_sub_1.clone(),
+                tid_2.clone(),
+                mock_credential.get_token(resource1, oid_sub_1.clone(), tid_2.clone()),
+            )
             .await?;
-        let expected_token = format!("{}-{}:2", resource2.join(" "), secret_string);
-        assert_eq!(token3.token.secret(), expected_token);
-        assert_eq!(token4.token.secret(), expected_token);
+        let expected_token = format!("{}-{}:2", resource1.join(" "), secret_string);
+
+        //check if the returned token is from the cache
+        assert_eq!(token3.0.token.secret(), expected_token);
+
+        let expected_token_new = format!("{}-{}:1", resource1.join(" "), secret_string);
+        assert_eq!(token4.0.token.secret(), expected_token_new);
 
         Ok(())
     }
