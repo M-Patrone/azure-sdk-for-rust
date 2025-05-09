@@ -1,3 +1,5 @@
+use super::client_info_flow;
+use super::client_info_flow::ClientInfoAuthCodeFlow;
 use super::hybrid_flow;
 use super::interactive_credential_cache::*;
 use super::internal_server::*;
@@ -81,14 +83,17 @@ impl InteractiveBrowserCredential {
     async fn get_auth_token(
         &self,
         scopes: &[&str],
-    ) -> (hybrid_flow::HybridAuthCodeFlow, Option<HybridAuthContext>) {
+    ) -> (
+        client_info_flow::ClientInfoAuthCodeFlow,
+        Option<HybridAuthContext>,
+    ) {
         let verified_scopes = ensure_default_scopes(scopes);
 
         info!("verified scopes: {:#?}", verified_scopes);
 
         let options = self.options.clone();
 
-        let hybrid_flow_code = hybrid_flow::authorize(
+        let hybrid_flow_code = client_info_flow::authorize(
             ClientId::new(options.client_id.unwrap().clone()),
             None,
             &options.tenant_id.unwrap().clone(),
@@ -110,7 +115,7 @@ impl InteractiveBrowserCredential {
     #[allow(dead_code)]
     async fn get_access_token(
         &self,
-        hybrid_flow_code: hybrid_flow::HybridAuthCodeFlow,
+        hybrid_flow_code: client_info_flow::ClientInfoAuthCodeFlow,
         auth_context: HybridAuthContext,
     ) -> azure_core::Result<(AccessToken, String, String)> {
         let acc = hybrid_flow_code

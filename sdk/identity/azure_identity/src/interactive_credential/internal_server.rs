@@ -236,7 +236,9 @@ fn handle_client(mut stream: TcpStream) -> Option<HybridAuthContext> {
     info!("Full request headers:\n{}", headers);
     info!("Full request body:\n{}", body_str);
 
-    let res_auth = extract_auth_information(&body_str);
+    //let res_auth = extract_auth_information(&body_str);
+
+    let code = extract_auth_code(&body_str);
 
     let response_body = r#"<!DOCTYPE html>
 <html><head><title>Auth Complete</title></head>
@@ -253,9 +255,14 @@ fn handle_client(mut stream: TcpStream) -> Option<HybridAuthContext> {
     stream.flush().ok()?;
     stream.shutdown(Shutdown::Both).ok()?;
 
-    res_auth
+    Some(HybridAuthContext {
+        auth_code: code.unwrap_or(String::from("NO VALUE")),
+        raw_id_token: String::from(""),
+        nonce: String::from(""),
+        oid_sub: String::from(""),
+        tid: String::from(""),
+    })
 }
-
 fn extract_auth_information(body_str: &str) -> Option<HybridAuthContext> {
     let parsed: std::collections::HashMap<_, _> = url::form_urlencoded::parse(body_str.as_bytes())
         .into_owned()
