@@ -12,12 +12,46 @@ use azure_core::{
     error::{ErrorKind, ResultExt},
     http::{HttpClient, Url},
 };
-use oauth2::{basic::BasicClient, EndpointNotSet, EndpointSet, HttpRequest, Scope};
+use oauth2::{
+    basic::{BasicClient, BasicErrorResponse, BasicRevocationErrorResponse, BasicTokenType},
+    Client, EndpointNotSet, EndpointSet, HttpRequest, Scope, StandardRevocableToken,
+    StandardTokenIntrospectionResponse, StandardTokenResponse,
+};
 use oauth2::{ClientId, ClientSecret};
 use std::{str::FromStr, sync::Arc};
 use tracing::info;
 
 use super::internal_server::HybridAuthContext;
+
+use oauth2::ExtraTokenFields;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ClientInfoExtraTokenFields {
+    pub client_info: Option<String>,
+}
+
+impl ExtraTokenFields for ClientInfoExtraTokenFields {}
+
+/// client type to handle the extra info in the body
+type ExtraTokenClient<
+    HasAuthUrl,
+    HasDeviceAuthUrl,
+    HasIntrospectionUrl,
+    HasRevocationUrl,
+    HasTokenUrl,
+> = Client<
+    BasicErrorResponse,
+    StandardTokenResponse<ClientInfoExtraTokenFields, BasicTokenType>,
+    StandardTokenIntrospectionResponse<ClientInfoExtraTokenFields, BasicTokenType>,
+    StandardRevocableToken,
+    BasicRevocationErrorResponse,
+    HasAuthUrl,
+    HasDeviceAuthUrl,
+    HasIntrospectionUrl,
+    HasRevocationUrl,
+    HasTokenUrl,
+>;
 
 /// Start an client_info flow.
 ///
@@ -45,7 +79,7 @@ pub fn authorize(
     );
 
     // Set up the config for the Microsoft Graph OAuth2 process.
-    let mut client = BasicClient::new(client_id)
+    let mut client = ExtraTokenClient::new(client_id)
         .set_auth_uri(auth_url)
         .set_token_uri(token_url)
         // Microsoft Graph requires client_id and client_secret in URL rather than
@@ -94,7 +128,7 @@ pub fn authorize(
 pub struct ClientInfoAuthCodeFlow {
     /// An HTTP client configured for OAuth2 authentication
     pub client:
-        BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
+        ExtraTokenClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
     /// The authentication HTTP endpoint
     pub authorize_url: Url,
     /// The CSRF token
@@ -105,7 +139,6 @@ pub struct ClientInfoAuthCodeFlow {
     // Openconnect: https://openid.net/specs/openid-connect-core-1_0.html#IDToken
     nonce: String,
 }
-
 #[allow(dead_code)]
 impl ClientInfoAuthCodeFlow {
     /// Exchange an authorization code for a token.
@@ -114,7 +147,7 @@ impl ClientInfoAuthCodeFlow {
         http_client: Arc<dyn HttpClient>,
         code: oauth2::AuthorizationCode,
     ) -> azure_core::Result<
-        oauth2::StandardTokenResponse<oauth2::EmptyExtraTokenFields, oauth2::basic::BasicTokenType>,
+        oauth2::StandardTokenResponse<ClientInfoExtraTokenFields, oauth2::basic::BasicTokenType>,
     > {
         //        let oauth_http_client = Oauth2HttpClient::new(http_client.clone());
         //        let client = |request: HttpRequest| oauth_http_client.request(request);
