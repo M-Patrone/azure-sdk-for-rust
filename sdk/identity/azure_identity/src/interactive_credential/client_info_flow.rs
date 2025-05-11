@@ -13,7 +13,7 @@ use azure_core::{
     http::{HttpClient, Url},
 };
 use oauth2::{
-    basic::{BasicClient, BasicErrorResponse, BasicRevocationErrorResponse, BasicTokenType},
+    basic::{BasicErrorResponse, BasicRevocationErrorResponse, BasicTokenType},
     Client, EndpointNotSet, EndpointSet, HttpRequest, Scope, StandardRevocableToken,
     StandardTokenIntrospectionResponse, StandardTokenResponse,
 };

@@ -22,6 +22,7 @@ use tracing::info;
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
 const DEFAULT_SCOPE_ARR: [&str; 3] = ["openid", "offline_access", "profile"];
+//const DEFAULT_SCOPE_ARR: [&str; 2] = ["offline_access", "openid"];
 /// Default client ID for interactive browser authentication.
 #[allow(dead_code)]
 const DEFAULT_DEVELOPER_SIGNON_CLIENT_ID: &str = "04b07795-8ddb-461a-bbee-02f9e1bf7b46";
