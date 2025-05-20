@@ -13,7 +13,6 @@ use azure_core::{
     },
     Uuid,
 };
-
 // cspell:ignore pkey
 use openssl::{
     error::ErrorStack,
