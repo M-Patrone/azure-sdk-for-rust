@@ -15,8 +15,8 @@ use azure_core::{
 use base64::engine::general_purpose;
 use oauth2::{
     basic::{BasicErrorResponse, BasicRevocationErrorResponse, BasicTokenType},
-    Client, EndpointNotSet, EndpointSet, HttpRequest, Scope, StandardRevocableToken,
-    StandardTokenIntrospectionResponse, StandardTokenResponse,
+    Client, EndpointNotSet, EndpointSet, HttpRequest, PkceCodeChallenge, Scope,
+    StandardRevocableToken, StandardTokenIntrospectionResponse, StandardTokenResponse,
 };
 use oauth2::{ClientId, ClientSecret};
 use std::{str::FromStr, sync::Arc};
@@ -28,44 +28,50 @@ use oauth2::ExtraTokenFields;
 use serde::{Deserialize, Serialize};
 
 use openssl::hash::MessageDigest;
+use rand::{thread_rng, Rng};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ClientInfoExtraTokenFields {
     pub client_info: Option<String>,
 }
 
-struct PkceCodeChallenge {
+struct PkceClientCodeChallenge {
     code_challenge: String,
-    code_challenge_method: String,
 }
-struct PkceCodeVerifier {
+struct PkceClientCodeVerifier {
     code_verifier: String,
 }
 
-impl PkceCodeChallenge {
-    fn new_random_sha256() -> (Self, PkceCodeVerifier) {
+impl PkceClientCodeChallenge {
+    fn new_random_sha256() -> (Self, PkceClientCodeVerifier) {
         Self::new_random_sha256_len(32)
     }
-
-    pub fn new_random_sha256_len(num_bytes: u32) -> (Self, PkceCodeVerifier) {
+    fn new_random_len(num_bytes: u32) -> PkceClientCodeVerifier {
+        // The RFC specifies that the code verifier must have "a minimum length of 43
+        // characters and a maximum length of 128 characters".
+        // This implies 32-96 octets of random data to be base64 encoded.
+        assert!((32..=96).contains(&num_bytes));
+        let random_bytes: Vec<u8> = (0..num_bytes).map(|_| thread_rng().gen::<u8>()).collect();
+        PkceClientCodeVerifier::new(general_purpose::URL_SAFE_NO_PAD.encode(random_bytes))
+    }
+    fn new_random_sha256_len(num_bytes: u32) -> (Self, PkceClientCodeVerifier) {
         let code_verifier = Self::new_random_len(num_bytes);
         (
             Self::from_code_verifier_sha256(&code_verifier),
             code_verifier,
         )
     }
-    pub fn from_code_verifier_sha256(code_verifier: &PkceCodeVerifier) -> Self {
+    fn from_code_verifier_sha256(code_verifier: &PkceClientCodeVerifier) -> Self {
         // The RFC specifies that the code verifier must have "a minimum length of 43
         // characters and a maximum length of 128 characters".
-        assert!(code_verifier.len() >= 43 && code_verifier.len() <= 128);
+        assert!(
+            code_verifier.code_verifier.len() >= 43 && code_verifier.code_verifier.len() <= 128
+        );
 
         let digest = openssl::MessageDigest::Sha256::digest(code_verifier.as_bytes());
         let code_challenge = general_purpose::URL_SAFE_NO_PAD.encode(digest);
 
-        Self {
-            code_challenge,
-            code_challenge_method: PkceCodeChallengeMethod::new("S256".to_string()),
-        }
+        Self { code_challenge }
     }
 }
 pub struct ExtraTokenClientInfo {
@@ -114,6 +120,10 @@ pub fn authorize_code(
         "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
     ))
     .expect("Invalid token endpoint URL");
+
+    // Microsoft Graph supports Proof Key for Code Exchange (PKCE - https://oauth.net/2/pkce/).
+    // Create a PKCE code verifier and SHA-256 encode it as a code challenge.
+    let (pkce_code_challenge, pkce_code_verifier) = PkceCodeChallenge::new_random_sha256();
 }
 
 /// Start an client_info flow.

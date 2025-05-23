@@ -4,6 +4,8 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
+//TODO: Remove comment when merging!
+//#[cfg(feature = "interactive_browser")]
 mod authorization_code_client_info_flow;
 mod authorization_code_flow;
 mod azure_pipelines_credential;

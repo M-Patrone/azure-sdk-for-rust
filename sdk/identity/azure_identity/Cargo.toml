@@ -18,7 +18,7 @@ async-trait.workspace = true
 azure_core.workspace = true
 futures.workspace = true
 oauth2.workspace = true
-openssl = { workspace = true, optional = true }
+openssl = { workspace = true}
 pin-project.workspace = true
 serde.workspace = true
 time.workspace = true
@@ -27,6 +27,7 @@ typespec_client_core = { workspace = true, features = ["derive"] }
 url.workspace = true
 base64.workspace = true
 serde_json.workspace = true
+rand.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 tz-rs = { workspace = true, optional = true }
@@ -40,14 +41,21 @@ serde_test.workspace = true
 serial_test.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true
+openssl.workspace = true
+rand.workspace = true
+
 
 [features]
 default = ["reqwest", "old_azure_cli"]
 reqwest = ["azure_core/reqwest"]
 reqwest_rustls = ["azure_core/reqwest_rustls"]
 tokio = ["azure_core/tokio"]
-client_certificate = ["openssl"]
 
+#TODO: include it
+#client_certificate = ["openssl"]
+
+client_certificate = []
+#interactive_browser = ["openssl", "rand"]
 # If you are using and Azure CLI version older than 2.54.0 from November 2023,
 # upgrade your Azure CLI version or enable this feature.
 # Azure CLI 2.54.0 and above has an "expires_on" timestamp that we can use.
