@@ -13,6 +13,8 @@ use azure_core::{
     http::{HttpClient, Url},
 };
 use base64::engine::general_purpose;
+use base64::Engine;
+
 use oauth2::{
     basic::{BasicErrorResponse, BasicRevocationErrorResponse, BasicTokenType},
     Client, EndpointNotSet, EndpointSet, HttpRequest, PkceCodeChallenge, Scope,
@@ -22,12 +24,12 @@ use oauth2::{ClientId, ClientSecret};
 use std::{str::FromStr, sync::Arc};
 use tracing::info;
 
-use super::internal_server::HybridAuthContext;
+//use super::internal_server::HybridAuthContext;
 
 use oauth2::ExtraTokenFields;
 use serde::{Deserialize, Serialize};
 
-use openssl::hash::MessageDigest;
+use openssl::hash::{hash, MessageDigest};
 use rand::{thread_rng, Rng};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -40,6 +42,14 @@ struct PkceClientCodeChallenge {
 }
 struct PkceClientCodeVerifier {
     code_verifier: String,
+}
+
+impl PkceClientCodeVerifier {
+    fn new(code_verifier: String) -> PkceClientCodeVerifier {
+        PkceClientCodeVerifier {
+            code_verifier: code_verifier.clone(),
+        }
+    }
 }
 
 impl PkceClientCodeChallenge {
@@ -68,8 +78,12 @@ impl PkceClientCodeChallenge {
             code_verifier.code_verifier.len() >= 43 && code_verifier.code_verifier.len() <= 128
         );
 
-        let digest = openssl::MessageDigest::Sha256::digest(code_verifier.as_bytes());
-        let code_challenge = general_purpose::URL_SAFE_NO_PAD.encode(digest);
+        let digest = hash(
+            MessageDigest::sha256(),
+            code_verifier.code_verifier.as_bytes(),
+        );
+
+        let code_challenge = general_purpose::URL_SAFE_NO_PAD.encode(digest.unwrap());
 
         Self { code_challenge }
     }
@@ -110,7 +124,7 @@ pub fn authorize_code(
     tenant_id: &str,
     redirect_url: Url,
     scopes: &[&str],
-) -> ExtraTokenClientInfo {
+) -> () {
     let auth_url = Url::parse(&format!(
         "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
     ))
@@ -125,7 +139,7 @@ pub fn authorize_code(
     // Create a PKCE code verifier and SHA-256 encode it as a code challenge.
     let (pkce_code_challenge, pkce_code_verifier) = PkceCodeChallenge::new_random_sha256();
 }
-
+/*
 /// Start an client_info flow.
 ///
 /// The values for `client_id`, `client_secret`, `tenant_id`, and `redirect_url` can all be found
@@ -275,3 +289,4 @@ impl ClientInfoAuthCodeFlow {
         None
     }
 }
+*/
