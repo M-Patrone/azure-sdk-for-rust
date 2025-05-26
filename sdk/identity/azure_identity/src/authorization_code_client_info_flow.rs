@@ -54,7 +54,11 @@ impl PkceClientCodeVerifier {
 
 impl PkceClientCodeChallenge {
     fn new_random_sha256() -> (Self, PkceClientCodeVerifier) {
-        Self::new_random_sha256_len(32)
+        let code_verifier = Self::new_random_len(32);
+        (
+            Self::from_code_verifier_sha256(&code_verifier),
+            code_verifier,
+        )
     }
     fn new_random_len(num_bytes: u32) -> PkceClientCodeVerifier {
         // The RFC specifies that the code verifier must have "a minimum length of 43
@@ -63,13 +67,6 @@ impl PkceClientCodeChallenge {
         assert!((32..=96).contains(&num_bytes));
         let random_bytes: Vec<u8> = (0..num_bytes).map(|_| thread_rng().gen::<u8>()).collect();
         PkceClientCodeVerifier::new(general_purpose::URL_SAFE_NO_PAD.encode(random_bytes))
-    }
-    fn new_random_sha256_len(num_bytes: u32) -> (Self, PkceClientCodeVerifier) {
-        let code_verifier = Self::new_random_len(num_bytes);
-        (
-            Self::from_code_verifier_sha256(&code_verifier),
-            code_verifier,
-        )
     }
     fn from_code_verifier_sha256(code_verifier: &PkceClientCodeVerifier) -> Self {
         // The RFC specifies that the code verifier must have "a minimum length of 43
@@ -92,39 +89,17 @@ pub struct ExtraTokenClientInfo {
     auth_url: Url,
     token_url: Url,
     redirect_url: Url,
-    client_secret: String,
+    client_secret: Option<String>,
     pkce_code_verifier: PkceCodeChallenge,
 }
 
-impl ExtraTokenFields for ClientInfoExtraTokenFields {}
-
-/// client type to handle the extra info in the body
-type ExtraTokenClient<
-    HasAuthUrl,
-    HasDeviceAuthUrl,
-    HasIntrospectionUrl,
-    HasRevocationUrl,
-    HasTokenUrl,
-> = Client<
-    BasicErrorResponse,
-    StandardTokenResponse<ClientInfoExtraTokenFields, BasicTokenType>,
-    StandardTokenIntrospectionResponse<ClientInfoExtraTokenFields, BasicTokenType>,
-    StandardRevocableToken,
-    BasicRevocationErrorResponse,
-    HasAuthUrl,
-    HasDeviceAuthUrl,
-    HasIntrospectionUrl,
-    HasRevocationUrl,
-    HasTokenUrl,
->;
-
 pub fn authorize_code(
     client_id: ClientId,
-    client_secret: Option<ClientSecret>,
+    client_secret: Option<String>,
     tenant_id: &str,
     redirect_url: Url,
     scopes: &[&str],
-) -> () {
+) -> ExtraTokenClientInfo {
     let auth_url = Url::parse(&format!(
         "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
     ))
@@ -137,7 +112,15 @@ pub fn authorize_code(
 
     // Microsoft Graph supports Proof Key for Code Exchange (PKCE - https://oauth.net/2/pkce/).
     // Create a PKCE code verifier and SHA-256 encode it as a code challenge.
-    let (pkce_code_challenge, pkce_code_verifier) = PkceCodeChallenge::new_random_sha256();
+    let (pkce_code_challenge, pkce_code_verifier) = PkceClientCodeChallenge::new_random_sha256();
+
+    ExtraTokenClientInfo {
+        auth_url,
+        token_url,
+        redirect_url,
+        client_secret,
+        pkce_code_verifier,
+    }
 }
 /*
 /// Start an client_info flow.
