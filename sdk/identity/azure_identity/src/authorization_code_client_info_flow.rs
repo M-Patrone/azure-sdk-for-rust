@@ -86,15 +86,20 @@ impl PkceClientCodeChallenge {
     }
 }
 pub struct ExtraTokenClientInfo {
+    client_id: String,
     auth_url: Url,
     token_url: Url,
     redirect_url: Url,
     client_secret: Option<String>,
-    pkce_code_verifier: PkceCodeChallenge,
+    pkce_code_verifier: PkceClientCodeVerifier,
+    pkce_code_challenge: PkceClientCodeChallenge,
+    auth_type: String,
+    scopes: Vec<String>,
+    response_mode: String,
 }
 
 pub fn authorize_code(
-    client_id: ClientId,
+    client_id: String,
     client_secret: Option<String>,
     tenant_id: &str,
     redirect_url: Url,
@@ -115,13 +120,20 @@ pub fn authorize_code(
     let (pkce_code_challenge, pkce_code_verifier) = PkceClientCodeChallenge::new_random_sha256();
 
     ExtraTokenClientInfo {
+        client_id,
         auth_url,
         token_url,
         redirect_url,
         client_secret,
         pkce_code_verifier,
+        pkce_code_challenge,
+        auth_type: "RequestBody".to_string(),
+        scopes: scopes.iter().map(|m| m.to_string()).collect(),
+        response_mode: "form_post".to_string(),
     }
 }
+
+//TODO: prepare requet: https://github.com/ramosbugs/oauth2-rs/blob/096b286b4faac77eb22276f62535f9f53e9d8610/src/devicecode.rs#L369
 /*
 /// Start an client_info flow.
 ///
