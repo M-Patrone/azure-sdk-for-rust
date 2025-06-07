@@ -17,6 +17,7 @@ mod client_secret_credential;
 mod default_azure_credential;
 mod env;
 mod imds_managed_identity_credential;
+mod interactive_credential;
 mod managed_identity_credential;
 mod options;
 mod process;
