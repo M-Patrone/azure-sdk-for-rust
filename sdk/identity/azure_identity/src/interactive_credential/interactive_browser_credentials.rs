@@ -61,4 +61,6 @@ impl InteractiveBrowserCredential {
             },
         })
     }
+
+    async fn get_auth_token(scopes: &[&str]) {}
 }
