@@ -1,6 +1,9 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
-use azure_core::http::Url;
+use azure_core::{
+    http::{new_http_client, HttpClient, Url},
+    process::Executor,
+};
 
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
@@ -26,6 +29,15 @@ pub struct InteractiveBrowserCredentialOptions {
     pub tenant_id: Option<String>,
     /// Redirect URI where the authentication response is sent.
     pub redirect_url: Option<Url>,
+
+    pub(crate) executor: Arc<dyn Executor>,
+    local_http_client: Arc<dyn HttpClient>,
+}
+
+impl InteractiveBrowserCredentialOptions {
+    pub fn http_client(&self) -> Arc<dyn HttpClient> {
+        self.local_http_client.clone()
+    }
 }
 
 #[derive(Debug)]
@@ -58,6 +70,9 @@ impl InteractiveBrowserCredential {
                 client_id,
                 tenant_id,
                 redirect_url,
+                //TODO  implement Default trait
+                http_client: new_http_client(),
+                executor: azure_core::process::new_executor(),
             },
         })
     }
