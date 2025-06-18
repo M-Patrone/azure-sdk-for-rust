@@ -13,16 +13,21 @@ pub async fn authorize(
     options: InteractiveBrowserCredentialOptions,
     scopes: &[&str],
 ) -> azure_core::Result<String> {
-    let tenant_id = options.tenant_id.expect("tenant_id has to be set");
+    let InteractiveBrowserCredentialOptions {
+        client_id,
+        tenant_id,
+        redirect_url,
+        executor,
+        ..
+    } = options.clone();
+    let tenant_id = tenant_id.expect("tenant_id has to be set");
     let auth_url: Url = Url::parse(&format!(
         "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
     ))
     .expect("Invalid authorization endpoint URL");
     let mut req_authorize = Request::new(auth_url, Method::Get);
 
-    let redirect_uri = options
-        .redirect_url
-        .expect("There has to be a redirect uri");
+    let redirect_uri = redirect_url.expect("There has to be a redirect uri");
 
     let mut body_authorize = form_urlencoded::Serializer::new(String::new())
         .append_pair("scopes", &scopes.join(" "))

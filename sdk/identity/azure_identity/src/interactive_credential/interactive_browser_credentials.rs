@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc, u16};
 
 use azure_core::{
     http::{new_http_client, HttpClient, Url},
@@ -15,7 +15,7 @@ const DEFAULT_DEVELOPER_SIGNON_CLIENT_ID: &str = "04b07795-8ddb-461a-bbee-02f9e1
 #[allow(dead_code)]
 const DEFAULT_ORGANIZATIONS_TENANT_ID: &str = "organizations";
 
-const LOCAL_SERVER_PORT: u8 = 53298;
+const LOCAL_SERVER_PORT: u16 = 53298;
 
 /// Configuration options for `InteractiveBrowserCredential`.
 ///
@@ -71,7 +71,7 @@ impl InteractiveBrowserCredential {
                 tenant_id,
                 redirect_url,
                 //TODO  implement Default trait
-                http_client: new_http_client(),
+                local_http_client: new_http_client(),
                 executor: azure_core::process::new_executor(),
             },
         })
