@@ -21,6 +21,7 @@ pub async fn authorize(
         ..
     } = options.clone();
     let tenant_id = tenant_id.expect("tenant_id has to be set");
+    let client_id= client_id.expect("client_id has to be set");
     let auth_url: Url = Url::parse(&format!(
         "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
     ))
@@ -30,26 +31,38 @@ pub async fn authorize(
     let redirect_uri = redirect_url.expect("There has to be a redirect uri");
 
     let mut body_authorize = form_urlencoded::Serializer::new(String::new())
+        .append_pair("client_id", &client_id)
         .append_pair("scopes", &scopes.join(" "))
         .append_pair("client_info", "1")
-        .append_pair("response_mode", "")
+        .append_pair("response_mode", "form_post")
         .append_pair("response_type", "code")
         .append_pair("redirect_uri", &redirect_uri.to_string())
         .finish();
     //.append_pair("nonce", "ahdfakjblaj"); //TODO: implement correct nonce later
 
-    let body = req_authorize.set_body(body_authorize);
+     req_authorize.set_body(body_authorize);
+let res = options
+    .http_client()
+    .execute_request(&req_authorize)
+    .await
+    .map_err(|err| {
+        azure_core::Error::full(
+            ErrorKind::Credential,
+            err,
+            "could not get the authorization code",
+        )
+    })?;
 
-    options
-        .http_client()
-        .execute_request(&req_authorize)
-        .await
-        .map(|res| Ok(String::new()))
-        .map_err(|err| {
-            azure_core::Error::full(
-                ErrorKind::Credential,
-                err,
-                "could not get the autorization code",
-            )
-        })?
+let body = res
+    .into_body()
+    .collect_string()
+    .await
+    .map_err(|err| {
+        azure_core::Error::full(
+            ErrorKind::Credential,
+            err,
+            "could not get the authorization code",
+        )
+    })?;
+return Ok(body);
 }
