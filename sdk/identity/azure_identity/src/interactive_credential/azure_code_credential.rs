@@ -21,9 +21,9 @@ pub async fn authorize(
         ..
     } = options.clone();
     let tenant_id = tenant_id.expect("tenant_id has to be set");
-    let client_id= client_id.expect("client_id has to be set");
+    let client_id = client_id.expect("client_id has to be set");
     let auth_url: Url = Url::parse(&format!(
-        "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
+        "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize",
     ))
     .expect("Invalid authorization endpoint URL");
     let mut req_authorize = Request::new(auth_url, Method::Get);
@@ -40,29 +40,25 @@ pub async fn authorize(
         .finish();
     //.append_pair("nonce", "ahdfakjblaj"); //TODO: implement correct nonce later
 
-     req_authorize.set_body(body_authorize);
-let res = options
-    .http_client()
-    .execute_request(&req_authorize)
-    .await
-    .map_err(|err| {
-        azure_core::Error::full(
-            ErrorKind::Credential,
-            err,
-            "could not get the authorization code",
-        )
-    })?;
+    req_authorize.set_body(body_authorize);
+    let res = options
+        .http_client()
+        .execute_request(&req_authorize)
+        .await
+        .map_err(|err| {
+            azure_core::Error::full(
+                ErrorKind::Credential,
+                err,
+                "could not get the authorization code",
+            )
+        })?;
 
-let body = res
-    .into_body()
-    .collect_string()
-    .await
-    .map_err(|err| {
+    let body = res.into_body().collect_string().await.map_err(|err| {
         azure_core::Error::full(
             ErrorKind::Credential,
             err,
             "could not get the authorization code",
         )
     })?;
-return Ok(body);
+    return Ok(body);
 }
