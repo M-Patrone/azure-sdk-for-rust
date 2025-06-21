@@ -5,9 +5,6 @@ use azure_core::{
     process::Executor,
 };
 
-/// Default OAuth scopes used when none are provided.
-#[allow(dead_code)]
-const DEFAULT_SCOPE_ARR: [&str; 3] = ["openid", "offline_access", "profile"];
 /// Default client ID for interactive browser authentication.
 #[allow(dead_code)]
 const DEFAULT_DEVELOPER_SIGNON_CLIENT_ID: &str = "04b07795-8ddb-461a-bbee-02f9e1bf7b46";
@@ -17,34 +14,6 @@ const DEFAULT_ORGANIZATIONS_TENANT_ID: &str = "organizations";
 
 const LOCAL_SERVER_PORT: u16 = 53298;
 
-
-/// Configuration options for `InteractiveBrowserCredential`.
-///
-/// This struct allows customization of the interactive browser authentication flow,
-/// including the client ID, tenant ID, and redirect URL used during the authentication process.
-#[derive(Clone, Debug)]
-pub struct OPENInteractiveBrowserCredentialOptions {
-    /// Client ID of the application.
-    pub client_id: Option<String>,
-    /// Tenant ID for the authentication request.
-    pub tenant_id: Option<String>,
-    /// Redirect URI where the authentication response is sent.
-    pub redirect_url: Option<Url>,
-}
-
-impl OPENInteractiveBrowserCredentialOptions {
-
-    pub fn new(client_id: Option<String>, tenant_id: Option<String>, redirect_url: Option<Url>) -> OPENInteractiveBrowserCredentialOptions{
-        return OPENInteractiveBrowserCredentialOptions{
-           client_id: client_id.clone(),
-            tenant_id: tenant_id.clone(),
-            redirect_url: redirect_url.clone()
-        }
-    }
-
-}
-
-
 /// Configuration options for `InteractiveBrowserCredential`.
 ///
 /// This struct allows customization of the interactive browser authentication flow,
@@ -52,11 +21,11 @@ impl OPENInteractiveBrowserCredentialOptions {
 #[derive(Clone, Debug)]
 pub struct InteractiveBrowserCredentialOptions {
     /// Client ID of the application.
-    pub client_id: Option<String>,
+    pub client_id: String,
     /// Tenant ID for the authentication request.
-    pub tenant_id: Option<String>,
+    pub tenant_id: String,
     /// Redirect URI where the authentication response is sent.
-    pub redirect_url: Option<Url>,
+    pub redirect_url: Url,
 
     pub(crate) executor: Arc<dyn Executor>,
     local_http_client: Arc<dyn HttpClient>,
@@ -70,28 +39,24 @@ impl InteractiveBrowserCredentialOptions {
 
 #[derive(Debug)]
 pub struct InteractiveBrowserCredential {
-    options: InteractiveBrowserCredentialOptions,
+    pub options: InteractiveBrowserCredentialOptions,
 }
 
 impl InteractiveBrowserCredential {
     /// Creates a new `InteractiveBrowserCredential` instance with `InteractiveBrowserCredentialOptions` parameters.
-    pub fn new(options: OPENInteractiveBrowserCredentialOptions) -> azure_core::Result<Self> {
-        let client_id = Some(
-            options
-                .client_id
-                .unwrap_or_else(|| DEFAULT_DEVELOPER_SIGNON_CLIENT_ID.to_owned()),
-        );
+    pub fn new(
+        client_id: Option<String>,
+        tenant_id: Option<String>,
+        redirect_url: Option<Url>,
+    ) -> azure_core::Result<Self> {
+        let client_id = client_id.unwrap_or_else(|| DEFAULT_DEVELOPER_SIGNON_CLIENT_ID.to_owned());
 
-        let tenant_id = Some(
-            options
-                .tenant_id
-                .unwrap_or_else(|| DEFAULT_ORGANIZATIONS_TENANT_ID.to_owned()),
-        );
+        let tenant_id = tenant_id.unwrap_or_else(|| DEFAULT_ORGANIZATIONS_TENANT_ID.to_owned());
 
-        let redirect_url = Some(options.redirect_url.unwrap_or_else(|| {
+        let redirect_url = redirect_url.unwrap_or_else(|| {
             Url::from_str(&format!("http://localhost:{}", LOCAL_SERVER_PORT))
                 .expect("Failed to parse redirect URL")
-        }));
+        });
 
         Ok(Self {
             options: InteractiveBrowserCredentialOptions {
@@ -110,6 +75,8 @@ impl InteractiveBrowserCredential {
 
 #[cfg(test)]
 mod tests {
+    use crate::interactive_credential::azure_code_credential::authorize;
+
     use super::*;
     use tracing::debug;
     use tracing::Level;
@@ -129,8 +96,11 @@ mod tests {
 
         debug!("Starting interactive_auth_flow test");
 
-        let credential_options = OPENInteractiveBrowserCredentialOptions::new(None, None, None);
+        let credential_options =
+            InteractiveBrowserCredential::new(None, None, None).expect("Error on setting ");
 
-        let credential = InteractiveBrowserCredential::new(options)
+        let res_body = authorize(credential_options, None).await;
+
+        debug!("body resutl: {:#?}", res_body);
     }
 }
