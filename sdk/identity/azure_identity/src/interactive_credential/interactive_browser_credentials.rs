@@ -76,6 +76,7 @@ impl InteractiveBrowserCredential {
 #[cfg(test)]
 mod tests {
     use crate::interactive_credential::azure_code_credential::authorize;
+    use crate::interactive_credential::internal_server::open_url;
 
     use super::*;
     use tracing::debug;
@@ -101,6 +102,14 @@ mod tests {
 
         let res_body = authorize(credential_options, None).await;
 
-        debug!("body resutl: {:#?}", res_body);
+        match res_body {
+            Ok(url) => {
+                debug!("url to open: {}", url.to_string());
+                open_url(&url.to_string()).await;
+            }
+            err => {
+                debug!("Error on authorize");
+            }
+        }
     }
 }

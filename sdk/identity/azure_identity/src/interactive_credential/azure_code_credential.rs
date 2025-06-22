@@ -20,7 +20,7 @@ const AUTORIZE_URL: &str = "https://login.microsoftonline.com/{tenant_id}/oauth2
 pub async fn authorize(
     options: InteractiveBrowserCredential,
     scopes: Option<&[&str]>,
-) -> azure_core::Result<String> {
+) -> Result<Url, url::ParseError> {
     let InteractiveBrowserCredentialOptions {
         client_id,
         tenant_id,
@@ -45,7 +45,7 @@ pub async fn authorize(
         .finish();
     debug!("Method authorize() after variable init");
 
-    let mut req_authorize = Request::new(
+    /*let mut req_authorize = Request::new(
         Url::from_str(&format!("{}{}", &auth_url, &body_authorize.to_string()))?,
         Method::Get,
     );
@@ -74,6 +74,6 @@ pub async fn authorize(
             err,
             "could not get the authorization code",
         )
-    })?;
-    return Ok(body);
+    })?;*/
+    Url::from_str(&format!("{}{}", &auth_url, &body_authorize.to_string()))
 }
