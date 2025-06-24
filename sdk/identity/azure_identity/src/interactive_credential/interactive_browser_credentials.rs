@@ -5,6 +5,21 @@ use azure_core::{
     process::Executor,
 };
 
+use azure_core::{
+    date::iso8601::option,
+    error::ErrorKind,
+    http::{Method, Request},
+};
+use tracing::debug;
+use url::form_urlencoded;
+
+use crate::interactive_credential::internal_server::open_url;
+
+/// Default OAuth scopes used when none are provided.
+#[allow(dead_code)]
+const DEFAULT_SCOPE_ARR: [&str; 3] = ["openid", "offline_access", "profile"];
+const AUTORIZE_URL: &str = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize";
+
 /// Default client ID for interactive browser authentication.
 #[allow(dead_code)]
 const DEFAULT_DEVELOPER_SIGNON_CLIENT_ID: &str = "04b07795-8ddb-461a-bbee-02f9e1bf7b46";
@@ -70,9 +85,49 @@ impl InteractiveBrowserCredential {
         })
     }
 
-    async fn get_auth_token(scopes: &[&str]) {}
+    async fn get_auth_token(&self, scopes: Option<&[&str]>) {
+        let url = self.authorize(scopes);
+        match url {
+            Ok(url) => {
+                debug!("url to open: {}", url.to_string());
+                open_url(&url.to_string()).await;
+            }
+            err => {
+                debug!("Error on authorize");
+            }
+        }
+    }
 }
 
+impl InteractiveBrowserCredential {
+    pub fn authorize(&self, scopes: Option<&[&str]>) -> Result<Url, url::ParseError> {
+        let InteractiveBrowserCredentialOptions {
+            client_id,
+            tenant_id,
+            redirect_url,
+            executor,
+            ..
+        } = self.options.clone();
+        let auth_url: Url = Url::parse(&format!(
+            "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize?",
+        ))
+        .expect("Invalid authorization endpoint URL");
+
+        let scopes = scopes.unwrap_or(&DEFAULT_SCOPE_ARR);
+
+        let mut body_authorize = form_urlencoded::Serializer::new(String::new())
+            .append_pair("client_id", &client_id)
+            .append_pair("scope", &scopes.join(" "))
+            .append_pair("client_info", "1")
+            .append_pair("response_mode", "form_post")
+            .append_pair("response_type", "code")
+            .append_pair("redirect_uri", &redirect_url.to_string())
+            .finish();
+        debug!("Method authorize() after variable init");
+
+        Url::from_str(&format!("{}{}", &auth_url, &body_authorize.to_string()))
+    }
+}
 #[cfg(test)]
 mod tests {
     use crate::interactive_credential::azure_code_credential::authorize;
@@ -101,15 +156,5 @@ mod tests {
             InteractiveBrowserCredential::new(None, None, None).expect("Error on setting ");
 
         let res_body = authorize(credential_options, None).await;
-
-        match res_body {
-            Ok(url) => {
-                debug!("url to open: {}", url.to_string());
-                open_url(&url.to_string()).await;
-            }
-            err => {
-                debug!("Error on authorize");
-            }
-        }
     }
 }
