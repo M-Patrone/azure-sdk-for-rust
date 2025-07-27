@@ -90,7 +90,7 @@ impl InteractiveBrowserCredential {
         match url {
             Ok(url) => {
                 debug!("url to open: {}", url.to_string());
-                open_url(&url.to_string()).await;
+                let option_hybrid_auth_context = open_url(&url.to_string()).await;
             }
             err => {
                 debug!("Error on authorize");
