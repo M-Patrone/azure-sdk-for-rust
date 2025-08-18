@@ -15,6 +15,8 @@ use url::form_urlencoded;
 
 use crate::interactive_credential::internal_server::open_url;
 
+use super::internal_server::HybridAuthContext;
+
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
 const DEFAULT_SCOPE_ARR: [&str; 3] = ["openid", "offline_access", "profile"];
@@ -90,17 +92,17 @@ impl InteractiveBrowserCredential {
         match url {
             Ok(url) => {
                 debug!("url to open: {}", url.to_string());
-                let option_hybrid_auth_context = open_url(&url.to_string()).await;
-            }
+                let option_hybrid_auth_context = open_url(&url.to_string()).await.expect("Could not get auth context");
+                option_hybrid_auth_context.
+                },
             err => {
                 debug!("Error on authorize");
             }
         }
     }
-}
 
 impl InteractiveBrowserCredential {
-    pub fn authorize(&self, scopes: Option<&[&str]>) -> Result<Url, url::ParseError> {
+    fn authorize(&self, scopes: Option<&[&str]>) -> Result<Url, url::ParseError> {
         let InteractiveBrowserCredentialOptions {
             client_id,
             tenant_id,
@@ -127,6 +129,16 @@ impl InteractiveBrowserCredential {
 
         Url::from_str(&format!("{}{}", &auth_url, &body_authorize.to_string()))
     }
+
+    async fn execute_auth_token_req(auth_context: HybridAuthContext){
+       let req = Request::new(Url::parse(&format!(
+            "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+        )), Method::Post);
+
+
+    }
+
+    //add https://github.com/Azure/azure-sdk-for-rust/blob/7f04e44c27aa83627013b6feee71823040492898/sdk/identity/azure_identity/src/client_certificate_credential.rs#L12
 }
 #[cfg(test)]
 mod tests {
