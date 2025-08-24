@@ -1,19 +1,22 @@
 use std::{str::FromStr, sync::Arc, u16};
 
 use azure_core::{
-    http::{new_http_client, HttpClient, Url},
-    process::Executor,
+    credentials::AccessToken, error::http_response_from_body, http::{
+        headers::{self, content_type},
+        new_http_client, HttpClient, Url,
+    }, process::Executor
 };
 
 use azure_core::{
-    date::iso8601::option,
     error::ErrorKind,
     http::{Method, Request},
+    time::{Duration, OffsetDateTime}
 };
+use time::OffsetDateTime;
 use tracing::debug;
 use url::form_urlencoded;
 
-use crate::interactive_credential::internal_server::open_url;
+use crate::{interactive_credential::internal_server::open_url, EntraIdTokenResponse};
 
 use super::internal_server::HybridAuthContext;
 
@@ -92,15 +95,17 @@ impl InteractiveBrowserCredential {
         match url {
             Ok(url) => {
                 debug!("url to open: {}", url.to_string());
-                let option_hybrid_auth_context = open_url(&url.to_string()).await.expect("Could not get auth context");
-                option_hybrid_auth_context.
-                },
+                let option_hybrid_auth_context = open_url(&url.to_string())
+                    .await
+                    .expect("Could not get auth context");
+                let a = self.authorize(scopes)
+            }
             err => {
                 debug!("Error on authorize");
             }
         }
     }
-
+}
 impl InteractiveBrowserCredential {
     fn authorize(&self, scopes: Option<&[&str]>) -> Result<Url, url::ParseError> {
         let InteractiveBrowserCredentialOptions {
@@ -130,16 +135,47 @@ impl InteractiveBrowserCredential {
         Url::from_str(&format!("{}{}", &auth_url, &body_authorize.to_string()))
     }
 
-    async fn execute_auth_token_req(auth_context: HybridAuthContext){
-       let req = Request::new(Url::parse(&format!(
-            "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-        )), Method::Post);
-
-
-    }
+    //https://learn.microsoft.com/en-us/graph/auth-v2-user?tabs=http
 
     //add https://github.com/Azure/azure-sdk-for-rust/blob/7f04e44c27aa83627013b6feee71823040492898/sdk/identity/azure_identity/src/client_certificate_credential.rs#L12
 }
+
+async fn get_access_token(scopes: &[&str], options: InteractiveBrowserCredentialOptions, auth_code: &str)-> azure_core::Result<AccessToken>{
+    let mut req = Request::new(Url::parse(&format!(
+            "https://login.microsoftonline.com/{}/oauth2/v2.0/token"
+        , &options.tenant_id)).unwrap(), Method::Post);
+
+    req.insert_header(headers::CONTENT_TYPE, content_type::APPLICATION_X_WWW_FORM_URLENCODED);
+
+    let encoded = {
+        let mut encoded = &mut form_urlencoded::Serializer::new(String::new());
+
+        encoded = encoded
+            .append_pair("client_id", &options.client_id)
+            .append_pair("scope", &scopes.join(" "))
+            .append_pair("code", auth_code )
+            .append_pair("grant_type", "authorize_code");
+
+    encoded.finish()
+
+    };
+
+    req.set_body(encoded);
+ let rsp = options.local_http_client.execute_request(&req).await?;
+        let rsp_status = rsp.status();
+
+ if !rsp_status.is_success() {
+            let rsp_body = rsp.into_body().collect().await?;
+            return Err(http_response_from_body(rsp_status, &rsp_body).into_error());
+        }
+
+        let response: EntraIdTokenResponse = rsp.into_body().json().await?;
+        Ok(AccessToken::new(
+            response.access_token,
+            OffsetDateTime::now_utc() + Duration::seconds(response.expires_in),
+        ))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::interactive_credential::azure_code_credential::authorize;
