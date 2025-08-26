@@ -4,12 +4,17 @@
 use azure_core::http::StatusCode;
 use azure_core_test::{recorded, TestContext};
 use azure_storage_blob::models::{
+    AccountKind, BlobContainerClientAcquireLeaseResultHeaders,
+    BlobContainerClientChangeLeaseResultHeaders, BlobContainerClientGetAccountInfoResultHeaders,
     BlobContainerClientGetPropertiesResultHeaders, BlobContainerClientListBlobFlatSegmentOptions,
     BlobContainerClientSetMetadataOptions, BlobType, LeaseState,
 };
-use azure_storage_blob_test::{create_test_blob, get_container_client};
+use azure_storage_blob_test::{
+    create_test_blob, get_blob_service_client, get_container_client, get_container_name,
+};
 use futures::{StreamExt, TryStreamExt};
-use std::{collections::HashMap, error::Error};
+use std::{collections::HashMap, error::Error, time::Duration};
+use tokio::time;
 
 #[recorded::test]
 async fn test_create_container(ctx: TestContext) -> Result<(), Box<dyn Error>> {
@@ -59,12 +64,8 @@ async fn test_set_container_metadata(ctx: TestContext) -> Result<(), Box<dyn Err
 
     // Set Metadata With Values
     let update_metadata = HashMap::from([("hello".to_string(), "world".to_string())]);
-    let set_metadata_options = BlobContainerClientSetMetadataOptions {
-        metadata: Some(update_metadata.clone()),
-        ..Default::default()
-    };
     container_client
-        .set_metadata(Some(set_metadata_options))
+        .set_metadata(update_metadata.clone(), None)
         .await?;
 
     // Assert
@@ -73,7 +74,7 @@ async fn test_set_container_metadata(ctx: TestContext) -> Result<(), Box<dyn Err
     assert_eq!(update_metadata, response_metadata);
 
     // Set Metadata No Values (Clear Metadata)
-    container_client.set_metadata(None).await?;
+    container_client.set_metadata(HashMap::new(), None).await?;
 
     // Assert
     let response = container_client.get_properties(None).await?;
@@ -92,8 +93,8 @@ async fn test_list_blobs(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     let blob_names = ["testblob1".to_string(), "testblob2".to_string()];
 
     container_client.create_container(None).await?;
-    create_test_blob(&container_client.blob_client(blob_names[0].clone())).await?;
-    create_test_blob(&container_client.blob_client(blob_names[1].clone())).await?;
+    create_test_blob(&container_client.blob_client(blob_names[0].clone()), None).await?;
+    create_test_blob(&container_client.blob_client(blob_names[1].clone()), None).await?;
 
     let mut list_blobs_response = container_client.list_blobs(None)?;
 
@@ -102,9 +103,12 @@ async fn test_list_blobs(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     let blob_list = list_blob_segment_response.segment.blob_items;
     for blob in blob_list {
         let blob_name = blob.name.unwrap().content.unwrap();
-        let blob_type = blob.properties.unwrap().blob_type.unwrap();
+        let properties = blob.properties.unwrap();
+        let blob_type = properties.blob_type.unwrap();
+        let etag = properties.etag;
         assert!(blob_names.contains(&blob_name));
         assert_eq!(BlobType::BlockBlob, blob_type);
+        assert!(etag.is_some());
     }
 
     container_client.delete_container(None).await?;
@@ -124,10 +128,10 @@ async fn test_list_blobs_with_continuation(ctx: TestContext) -> Result<(), Box<d
     ];
 
     container_client.create_container(None).await?;
-    create_test_blob(&container_client.blob_client(blob_names[0].clone())).await?;
-    create_test_blob(&container_client.blob_client(blob_names[1].clone())).await?;
-    create_test_blob(&container_client.blob_client(blob_names[2].clone())).await?;
-    create_test_blob(&container_client.blob_client(blob_names[3].clone())).await?;
+    create_test_blob(&container_client.blob_client(blob_names[0].clone()), None).await?;
+    create_test_blob(&container_client.blob_client(blob_names[1].clone()), None).await?;
+    create_test_blob(&container_client.blob_client(blob_names[2].clone()), None).await?;
+    create_test_blob(&container_client.blob_client(blob_names[3].clone()), None).await?;
 
     // Continuation Token with Token Provided
     let list_blobs_options = BlobContainerClientListBlobFlatSegmentOptions {
@@ -199,5 +203,93 @@ async fn test_list_blobs_with_continuation(ctx: TestContext) -> Result<(), Box<d
     }
 
     container_client.delete_container(None).await?;
+    Ok(())
+}
+
+#[recorded::test]
+async fn test_container_lease_operations(ctx: TestContext) -> Result<(), Box<dyn Error>> {
+    // Recording Setup
+    let recording = ctx.recording();
+    let blob_service_client = get_blob_service_client(recording)?;
+    let container_name = get_container_name(recording);
+    let container_client = blob_service_client.blob_container_client(container_name.clone());
+    let other_container_client = blob_service_client.blob_container_client(container_name);
+    container_client.create_container(None).await?;
+
+    // Acquire Lease
+    let acquire_response = container_client.acquire_lease(15, None).await?;
+    let lease_id = acquire_response.lease_id()?.unwrap();
+    let other_acquire_response = other_container_client.acquire_lease(15, None).await;
+    // Assert
+    let error = other_acquire_response.unwrap_err().http_status();
+    assert_eq!(StatusCode::Conflict, error.unwrap());
+
+    let update_metadata = HashMap::from([("hello".to_string(), "world".to_string())]);
+    let set_metadata_options = BlobContainerClientSetMetadataOptions {
+        lease_id: Some(lease_id.clone()),
+        ..Default::default()
+    };
+    container_client
+        .set_metadata(update_metadata, Some(set_metadata_options))
+        .await?;
+
+    // Change Lease
+    let proposed_lease_id = "00000000-1111-2222-3333-444444444444".to_string();
+    let change_lease_response = container_client
+        .change_lease(lease_id, proposed_lease_id.clone(), None)
+        .await?;
+    // Assert
+    let lease_id = change_lease_response.lease_id()?.unwrap();
+    assert_eq!(proposed_lease_id.clone().to_string(), lease_id);
+
+    // Sleep until lease expires
+    time::sleep(Duration::from_secs(15)).await;
+
+    // Renew Lease
+    container_client
+        .renew_lease(proposed_lease_id.clone(), None)
+        .await?;
+    let other_acquire_response = other_container_client.acquire_lease(15, None).await;
+    // Assert
+    let error = other_acquire_response.unwrap_err().http_status();
+    assert_eq!(StatusCode::Conflict, error.unwrap());
+
+    // Break Lease
+    container_client.break_lease(None).await?;
+    let other_acquire_response = other_container_client.acquire_lease(15, None).await;
+    // Assert
+    let error = other_acquire_response.unwrap_err().http_status();
+    assert_eq!(StatusCode::Conflict, error.unwrap());
+
+    // Release Lease
+    container_client
+        .release_lease(proposed_lease_id.clone(), None)
+        .await?;
+    let other_acquire_response = other_container_client.acquire_lease(15, None).await;
+    let lease_id = other_acquire_response?.lease_id().unwrap();
+    other_container_client
+        .release_lease(lease_id.unwrap(), None)
+        .await?;
+
+    container_client.delete_container(None).await?;
+    Ok(())
+}
+
+#[recorded::test]
+async fn test_get_account_info(ctx: TestContext) -> Result<(), Box<dyn Error>> {
+    // Recording Setup
+    let recording = ctx.recording();
+    let container_client = get_container_client(recording, true).await?;
+
+    // Act
+    let response = container_client.get_account_info(None).await?;
+
+    // Assert
+    let sku_name = response.sku_name()?;
+    let account_kind = response.account_kind()?;
+
+    assert!(sku_name.is_some());
+    assert_eq!(AccountKind::StorageV2, account_kind.unwrap());
+
     Ok(())
 }

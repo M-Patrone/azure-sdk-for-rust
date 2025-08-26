@@ -11,11 +11,8 @@ mod macros;
 
 mod constants;
 pub mod credentials;
-pub mod fs;
 pub mod hmac;
 pub mod http;
-pub mod process;
-pub mod task;
 
 #[cfg(feature = "test")]
 pub mod test;
@@ -24,10 +21,20 @@ pub use constants::*;
 
 // Re-export modules in typespec_client_core such that azure_core-based crates don't need to reference it directly.
 pub use typespec_client_core::{
-    base64, create_enum, create_extensible_enum, date,
+    async_runtime, base64, create_enum, create_extensible_enum,
     error::{self, Error, Result},
-    fmt, json, sleep, stream, Bytes, Uuid,
+    fmt, json, sleep, stream, time, Bytes, Uuid,
 };
+
+/// Abstractions for distributed tracing and telemetry.
+pub mod tracing {
+    pub use crate::http::policies::PublicApiInstrumentationInformation;
+    pub use azure_core_macros::{client, function, new, subclient};
+    pub use typespec_client_core::tracing::{
+        AsAny, Attribute, AttributeArray, AttributeValue, Span, SpanGuard, SpanKind, SpanStatus,
+        Tracer, TracerProvider,
+    };
+}
 
 #[cfg(feature = "xml")]
 pub use typespec_client_core::xml;

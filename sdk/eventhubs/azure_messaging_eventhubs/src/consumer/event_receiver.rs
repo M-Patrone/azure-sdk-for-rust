@@ -1,14 +1,14 @@
 // Copyright (c) Microsoft Corporation. All Rights reserved
 // Licensed under the MIT license.
 
-use crate::{common::recoverable_connection::RecoverableConnection, models::ReceivedEventData};
+use crate::{common::recoverable::RecoverableConnection, models::ReceivedEventData};
 use async_stream::try_stream;
-use azure_core::{error::Result, http::Url};
+use azure_core::{error::Result, http::Url, time::Duration};
 use azure_core_amqp::{
     AmqpDeliveryApis as _, AmqpReceiverApis as _, AmqpReceiverOptions, AmqpSource,
 };
 use futures::Stream;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tracing::trace;
 
 /// A message receiver that can be used to receive messages from an Event Hub.
@@ -19,12 +19,12 @@ use tracing::trace;
 ///
 /// ```no_run
 /// use azure_messaging_eventhubs::ConsumerClient;
-/// use azure_identity::{DefaultAzureCredential, TokenCredentialOptions};
+/// use azure_identity::{DeveloperToolsCredential, TokenCredentialOptions};
 /// use futures::stream::StreamExt;
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let my_credential = DefaultAzureCredential::new()?;
+///     let my_credential = DeveloperToolsCredential::new(None)?;
 ///     let consumer = ConsumerClient::builder()
 ///        .open("my_namespace", "my_eventhub".to_string(), my_credential).await?;
 ///     let partition_id = "0".to_string();

@@ -3,7 +3,12 @@
 
 use crate::{
     generated::clients::BlobServiceClient as GeneratedBlobServiceClient,
-    models::{BlobServiceClientGetPropertiesOptions, StorageServiceProperties},
+    generated::models::BlobServiceClientGetAccountInfoResult,
+    models::{
+        BlobServiceClientGetAccountInfoOptions, BlobServiceClientGetPropertiesOptions,
+        BlobServiceClientListContainersSegmentOptions, BlobServiceClientSetPropertiesOptions,
+        BlobServiceProperties, ListContainersSegmentResponse,
+    },
     pipeline::StorageHeadersPolicy,
     BlobContainerClient, BlobServiceClientOptions,
 };
@@ -11,7 +16,7 @@ use azure_core::{
     credentials::TokenCredential,
     http::{
         policies::{BearerTokenCredentialPolicy, Policy},
-        Response, Url, XmlFormat,
+        NoFormat, PageIterator, RequestContent, Response, Url, XmlFormat,
     },
     Result,
 };
@@ -43,15 +48,6 @@ impl BlobServiceClient {
             .client_options
             .per_call_policies
             .push(storage_headers_policy);
-
-        let oauth_token_policy = BearerTokenCredentialPolicy::new(
-            credential.clone(),
-            ["https://storage.azure.com/.default"],
-        );
-        options
-            .client_options
-            .per_try_policies
-            .push(Arc::new(oauth_token_policy) as Arc<dyn Policy>);
 
         let client = GeneratedBlobServiceClient::new(endpoint, credential.clone(), Some(options))?;
 
@@ -86,7 +82,48 @@ impl BlobServiceClient {
     pub async fn get_properties(
         &self,
         options: Option<BlobServiceClientGetPropertiesOptions<'_>>,
-    ) -> Result<Response<StorageServiceProperties, XmlFormat>> {
+    ) -> Result<Response<BlobServiceProperties, XmlFormat>> {
         self.client.get_properties(options).await
+    }
+
+    /// Returns a list of the containers under the specified Storage account.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Optional configuration for the request.
+    pub fn list_containers(
+        &self,
+        options: Option<BlobServiceClientListContainersSegmentOptions<'_>>,
+    ) -> Result<PageIterator<Response<ListContainersSegmentResponse, XmlFormat>>> {
+        self.client.list_containers_segment(options)
+    }
+
+    /// Sets properties for a Storage account's Blob service endpoint, including properties for Storage Analytics and CORS rules.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage_service_properties` - The Storage service properties to set.
+    /// * `options` - Optional configuration for the request.
+    pub async fn set_properties(
+        &self,
+        storage_service_properties: RequestContent<BlobServiceProperties, XmlFormat>,
+        options: Option<BlobServiceClientSetPropertiesOptions<'_>>,
+    ) -> Result<Response<(), NoFormat>> {
+        self.client
+            .set_properties(storage_service_properties, options)
+            .await
+    }
+
+    /// Gets information related to the Storage account.
+    /// This includes the `sku_name` and `account_kind`.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Optional configuration for the request.
+    pub async fn get_account_info(
+        &self,
+        options: Option<BlobServiceClientGetAccountInfoOptions<'_>>,
+    ) -> Result<Response<BlobServiceClientGetAccountInfoResult, NoFormat>> {
+        self.client.get_account_info(options).await
     }
 }

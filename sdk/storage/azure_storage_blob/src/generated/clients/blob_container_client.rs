@@ -26,17 +26,19 @@ use crate::generated::{
 };
 use azure_core::{
     credentials::TokenCredential,
-    date,
+    error::{ErrorKind, HttpError},
     fmt::SafeDebug,
     http::{
         policies::{BearerTokenCredentialPolicy, Policy},
-        ClientOptions, Context, Method, PageIterator, PagerResult, Pipeline, RawResponse, Request,
-        RequestContent, Response, Url, XmlFormat,
+        ClientOptions, Context, Method, NoFormat, PageIterator, PagerResult, PagerState, Pipeline,
+        RawResponse, Request, RequestContent, Response, Url, XmlFormat,
     },
-    xml, Result,
+    time::to_rfc7231,
+    tracing, xml, Error, Result,
 };
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
+#[tracing::client]
 pub struct BlobContainerClient {
     pub(crate) container_name: String,
     pub(crate) endpoint: Url,
@@ -63,6 +65,7 @@ impl BlobContainerClient {
     ///   Entra ID token to use when authenticating.
     /// * `container_name` - The name of the container.
     /// * `options` - Optional configuration for the client.
+    #[tracing::new("azure_storage_blob")]
     pub fn new(
         endpoint: &str,
         credential: Arc<dyn TokenCredential>,
@@ -106,11 +109,15 @@ impl BlobContainerClient {
     ///
     /// # Arguments
     ///
+    /// * `duration` - Specifies the duration of the lease, in seconds, or negative one (-1) for a lease that never expires. A
+    ///   non-infinite lease can be between 15 and 60 seconds. A lease duration cannot be changed using renew or change.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.acquireLease")]
     pub async fn acquire_lease(
         &self,
+        duration: i32,
         options: Option<BlobContainerClientAcquireLeaseOptions<'_>>,
-    ) -> Result<Response<BlobContainerClientAcquireLeaseResult>> {
+    ) -> Result<Response<BlobContainerClientAcquireLeaseResult, NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -125,27 +132,32 @@ impl BlobContainerClient {
         }
         let mut request = Request::new(url, Method::Put);
         request.insert_header("accept", "application/xml");
-        request.insert_header("content-type", "application/xml");
         if let Some(if_modified_since) = options.if_modified_since {
-            request.insert_header("if-modified-since", date::to_rfc7231(&if_modified_since));
+            request.insert_header("if-modified-since", to_rfc7231(&if_modified_since));
         }
         if let Some(if_unmodified_since) = options.if_unmodified_since {
-            request.insert_header(
-                "if-unmodified-since",
-                date::to_rfc7231(&if_unmodified_since),
-            );
+            request.insert_header("if-unmodified-since", to_rfc7231(&if_unmodified_since));
         }
         if let Some(client_request_id) = options.client_request_id {
             request.insert_header("x-ms-client-request-id", client_request_id);
         }
-        if let Some(duration) = options.duration {
-            request.insert_header("x-ms-lease-duration", duration.to_string());
-        }
+        request.insert_header("x-ms-lease-action", "acquire");
+        request.insert_header("x-ms-lease-duration", duration.to_string());
         if let Some(proposed_lease_id) = options.proposed_lease_id {
             request.insert_header("x-ms-proposed-lease-id", proposed_lease_id);
         }
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// The Break Lease operation ends a lease and ensures that another client can't acquire a new lease until the current lease
@@ -154,10 +166,11 @@ impl BlobContainerClient {
     /// # Arguments
     ///
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.breakLease")]
     pub async fn break_lease(
         &self,
         options: Option<BlobContainerClientBreakLeaseOptions<'_>>,
-    ) -> Result<Response<BlobContainerClientBreakLeaseResult>> {
+    ) -> Result<Response<BlobContainerClientBreakLeaseResult, NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -174,22 +187,30 @@ impl BlobContainerClient {
         request.insert_header("accept", "application/xml");
         request.insert_header("content-type", "application/xml");
         if let Some(if_modified_since) = options.if_modified_since {
-            request.insert_header("if-modified-since", date::to_rfc7231(&if_modified_since));
+            request.insert_header("if-modified-since", to_rfc7231(&if_modified_since));
         }
         if let Some(if_unmodified_since) = options.if_unmodified_since {
-            request.insert_header(
-                "if-unmodified-since",
-                date::to_rfc7231(&if_unmodified_since),
-            );
+            request.insert_header("if-unmodified-since", to_rfc7231(&if_unmodified_since));
         }
         if let Some(client_request_id) = options.client_request_id {
             request.insert_header("x-ms-client-request-id", client_request_id);
         }
+        request.insert_header("x-ms-lease-action", "break");
         if let Some(break_period) = options.break_period {
             request.insert_header("x-ms-lease-break-period", break_period.to_string());
         }
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// The Change Lease operation is used to change the ID of an existing lease.
@@ -200,12 +221,13 @@ impl BlobContainerClient {
     ///   lease ID must match.
     /// * `proposed_lease_id` - Required. The proposed lease ID for the container.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.changeLease")]
     pub async fn change_lease(
         &self,
         lease_id: String,
         proposed_lease_id: String,
         options: Option<BlobContainerClientChangeLeaseOptions<'_>>,
-    ) -> Result<Response<BlobContainerClientChangeLeaseResult>> {
+    ) -> Result<Response<BlobContainerClientChangeLeaseResult, NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -222,21 +244,29 @@ impl BlobContainerClient {
         request.insert_header("accept", "application/xml");
         request.insert_header("content-type", "application/xml");
         if let Some(if_modified_since) = options.if_modified_since {
-            request.insert_header("if-modified-since", date::to_rfc7231(&if_modified_since));
+            request.insert_header("if-modified-since", to_rfc7231(&if_modified_since));
         }
         if let Some(if_unmodified_since) = options.if_unmodified_since {
-            request.insert_header(
-                "if-unmodified-since",
-                date::to_rfc7231(&if_unmodified_since),
-            );
+            request.insert_header("if-unmodified-since", to_rfc7231(&if_unmodified_since));
         }
         if let Some(client_request_id) = options.client_request_id {
             request.insert_header("x-ms-client-request-id", client_request_id);
         }
+        request.insert_header("x-ms-lease-action", "change");
         request.insert_header("x-ms-lease-id", lease_id);
         request.insert_header("x-ms-proposed-lease-id", proposed_lease_id);
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Creates a new container under the specified account. If the container with the same name already exists, the operation
@@ -245,10 +275,11 @@ impl BlobContainerClient {
     /// # Arguments
     ///
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.create")]
     pub async fn create(
         &self,
         options: Option<BlobContainerClientCreateOptions<'_>>,
-    ) -> Result<Response<()>> {
+    ) -> Result<Response<(), NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -278,11 +309,21 @@ impl BlobContainerClient {
         }
         if let Some(metadata) = options.metadata {
             for (k, v) in &metadata {
-                request.insert_header(format!("x-ms-meta-{}", k), v);
+                request.insert_header(format!("x-ms-meta-{k}"), v);
             }
         }
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// operation marks the specified container for deletion. The container and any blobs contained within it are later deleted
@@ -291,10 +332,11 @@ impl BlobContainerClient {
     /// # Arguments
     ///
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.delete")]
     pub async fn delete(
         &self,
         options: Option<BlobContainerClientDeleteOptions<'_>>,
-    ) -> Result<Response<()>> {
+    ) -> Result<Response<(), NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -308,13 +350,10 @@ impl BlobContainerClient {
         request.insert_header("accept", "application/xml");
         request.insert_header("content-type", "application/xml");
         if let Some(if_modified_since) = options.if_modified_since {
-            request.insert_header("if-modified-since", date::to_rfc7231(&if_modified_since));
+            request.insert_header("if-modified-since", to_rfc7231(&if_modified_since));
         }
         if let Some(if_unmodified_since) = options.if_unmodified_since {
-            request.insert_header(
-                "if-unmodified-since",
-                date::to_rfc7231(&if_unmodified_since),
-            );
+            request.insert_header("if-unmodified-since", to_rfc7231(&if_unmodified_since));
         }
         if let Some(client_request_id) = options.client_request_id {
             request.insert_header("x-ms-client-request-id", client_request_id);
@@ -323,7 +362,17 @@ impl BlobContainerClient {
             request.insert_header("x-ms-lease-id", lease_id);
         }
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// The Filter Blobs operation enables callers to list blobs in a container whose tags match a given search expression. Filter
@@ -332,6 +381,7 @@ impl BlobContainerClient {
     /// # Arguments
     ///
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.filterBlobs")]
     pub async fn filter_blobs(
         &self,
         options: Option<BlobContainerClientFilterBlobsOptions<'_>>,
@@ -374,7 +424,17 @@ impl BlobContainerClient {
             request.insert_header("x-ms-client-request-id", client_request_id);
         }
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// gets the permissions for the specified container. The permissions indicate whether container data may be accessed publicly.
@@ -382,6 +442,7 @@ impl BlobContainerClient {
     /// # Arguments
     ///
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.getAccessPolicy")]
     pub async fn get_access_policy(
         &self,
         options: Option<BlobContainerClientGetAccessPolicyOptions<'_>>,
@@ -407,7 +468,17 @@ impl BlobContainerClient {
             request.insert_header("x-ms-lease-id", lease_id);
         }
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Returns the sku name and account kind
@@ -415,10 +486,11 @@ impl BlobContainerClient {
     /// # Arguments
     ///
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.getAccountInfo")]
     pub async fn get_account_info(
         &self,
         options: Option<BlobContainerClientGetAccountInfoOptions<'_>>,
-    ) -> Result<Response<BlobContainerClientGetAccountInfoResult>> {
+    ) -> Result<Response<BlobContainerClientGetAccountInfoResult, NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -437,7 +509,17 @@ impl BlobContainerClient {
             request.insert_header("x-ms-client-request-id", client_request_id);
         }
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Returns a new instance of BlobClient.
@@ -445,6 +527,7 @@ impl BlobContainerClient {
     /// # Arguments
     ///
     /// * `blob_name` - The name of the blob.
+    #[tracing::subclient]
     pub fn get_blob_client(&self, blob_name: String) -> BlobClient {
         BlobClient {
             blob_name,
@@ -461,10 +544,11 @@ impl BlobContainerClient {
     /// # Arguments
     ///
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.getProperties")]
     pub async fn get_properties(
         &self,
         options: Option<BlobContainerClientGetPropertiesOptions<'_>>,
-    ) -> Result<Response<BlobContainerClientGetPropertiesResult>> {
+    ) -> Result<Response<BlobContainerClientGetPropertiesResult, NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -484,7 +568,17 @@ impl BlobContainerClient {
             request.insert_header("x-ms-lease-id", lease_id);
         }
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// The List Blobs operation returns a list of the blobs under the specified container.
@@ -492,6 +586,7 @@ impl BlobContainerClient {
     /// # Arguments
     ///
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.listBlobFlatSegment")]
     pub fn list_blob_flat_segment(
         &self,
         options: Option<BlobContainerClientListBlobFlatSegmentOptions<'_>>,
@@ -533,9 +628,9 @@ impl BlobContainerClient {
         }
         let version = self.version.clone();
         Ok(PageIterator::from_callback(
-            move |marker: Option<String>| {
+            move |marker: PagerState<String>| {
                 let mut url = first_url.clone();
-                if let Some(marker) = marker {
+                if let PagerState::More(marker) = marker {
                     if url.query_pairs().any(|(name, _)| name.eq("marker")) {
                         let mut new_url = url.clone();
                         new_url
@@ -556,20 +651,26 @@ impl BlobContainerClient {
                 let ctx = options.method_options.context.clone();
                 let pipeline = pipeline.clone();
                 async move {
-                    let rsp: Response<ListBlobsFlatSegmentResponse> =
-                        pipeline.send(&ctx, &mut request).await?.into();
+                    let rsp: RawResponse = pipeline.send(&ctx, &mut request).await?;
+                    if !rsp.status().is_success() {
+                        let status = rsp.status();
+                        let http_error = HttpError::new(rsp).await;
+                        let error_kind = ErrorKind::http_response(
+                            status,
+                            http_error.error_code().map(std::borrow::ToOwned::to_owned),
+                        );
+                        return Err(Error::new(error_kind, http_error));
+                    }
                     let (status, headers, body) = rsp.deconstruct();
                     let bytes = body.collect().await?;
                     let res: ListBlobsFlatSegmentResponse = xml::read_xml(&bytes)?;
                     let rsp = RawResponse::from_bytes(status, headers, bytes).into();
-                    let next_marker = res.next_marker.unwrap_or_default();
-                    Ok(if next_marker.is_empty() {
-                        PagerResult::Done { response: rsp }
-                    } else {
-                        PagerResult::More {
+                    Ok(match res.next_marker {
+                        Some(next_marker) if !next_marker.is_empty() => PagerResult::More {
                             response: rsp,
-                            next: next_marker,
-                        }
+                            continuation: next_marker,
+                        },
+                        _ => PagerResult::Done { response: rsp },
                     })
                 }
             },
@@ -585,6 +686,7 @@ impl BlobContainerClient {
     ///   that acts as a placeholder for all blobs whose names begin with the same substring up to the appearance of the delimiter
     ///   character. The delimiter may be a single character or a string.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.listBlobHierarchySegment")]
     pub fn list_blob_hierarchy_segment(
         &self,
         delimiter: &str,
@@ -630,9 +732,9 @@ impl BlobContainerClient {
         }
         let version = self.version.clone();
         Ok(PageIterator::from_callback(
-            move |marker: Option<String>| {
+            move |marker: PagerState<String>| {
                 let mut url = first_url.clone();
-                if let Some(marker) = marker {
+                if let PagerState::More(marker) = marker {
                     if url.query_pairs().any(|(name, _)| name.eq("marker")) {
                         let mut new_url = url.clone();
                         new_url
@@ -653,20 +755,26 @@ impl BlobContainerClient {
                 let ctx = options.method_options.context.clone();
                 let pipeline = pipeline.clone();
                 async move {
-                    let rsp: Response<ListBlobsHierarchySegmentResponse> =
-                        pipeline.send(&ctx, &mut request).await?.into();
+                    let rsp: RawResponse = pipeline.send(&ctx, &mut request).await?;
+                    if !rsp.status().is_success() {
+                        let status = rsp.status();
+                        let http_error = HttpError::new(rsp).await;
+                        let error_kind = ErrorKind::http_response(
+                            status,
+                            http_error.error_code().map(std::borrow::ToOwned::to_owned),
+                        );
+                        return Err(Error::new(error_kind, http_error));
+                    }
                     let (status, headers, body) = rsp.deconstruct();
                     let bytes = body.collect().await?;
                     let res: ListBlobsHierarchySegmentResponse = xml::read_xml(&bytes)?;
                     let rsp = RawResponse::from_bytes(status, headers, bytes).into();
-                    let next_marker = res.next_marker.unwrap_or_default();
-                    Ok(if next_marker.is_empty() {
-                        PagerResult::Done { response: rsp }
-                    } else {
-                        PagerResult::More {
+                    Ok(match res.next_marker {
+                        Some(next_marker) if !next_marker.is_empty() => PagerResult::More {
                             response: rsp,
-                            next: next_marker,
-                        }
+                            continuation: next_marker,
+                        },
+                        _ => PagerResult::Done { response: rsp },
                     })
                 }
             },
@@ -681,11 +789,12 @@ impl BlobContainerClient {
     /// * `lease_id` - Required. A lease ID for the source path. If specified, the source path must have an active lease and the
     ///   lease ID must match.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.releaseLease")]
     pub async fn release_lease(
         &self,
         lease_id: String,
         options: Option<BlobContainerClientReleaseLeaseOptions<'_>>,
-    ) -> Result<Response<BlobContainerClientReleaseLeaseResult>> {
+    ) -> Result<Response<BlobContainerClientReleaseLeaseResult, NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -702,20 +811,28 @@ impl BlobContainerClient {
         request.insert_header("accept", "application/xml");
         request.insert_header("content-type", "application/xml");
         if let Some(if_modified_since) = options.if_modified_since {
-            request.insert_header("if-modified-since", date::to_rfc7231(&if_modified_since));
+            request.insert_header("if-modified-since", to_rfc7231(&if_modified_since));
         }
         if let Some(if_unmodified_since) = options.if_unmodified_since {
-            request.insert_header(
-                "if-unmodified-since",
-                date::to_rfc7231(&if_unmodified_since),
-            );
+            request.insert_header("if-unmodified-since", to_rfc7231(&if_unmodified_since));
         }
         if let Some(client_request_id) = options.client_request_id {
             request.insert_header("x-ms-client-request-id", client_request_id);
         }
+        request.insert_header("x-ms-lease-action", "release");
         request.insert_header("x-ms-lease-id", lease_id);
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Renames an existing container.
@@ -724,11 +841,12 @@ impl BlobContainerClient {
     ///
     /// * `source_container_name` - Required. Specifies the name of the container to rename.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.rename")]
     pub async fn rename(
         &self,
         source_container_name: String,
         options: Option<BlobContainerClientRenameOptions<'_>>,
-    ) -> Result<Response<BlobContainerClientRenameResult>> {
+    ) -> Result<Response<BlobContainerClientRenameResult, NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -751,7 +869,17 @@ impl BlobContainerClient {
             request.insert_header("x-ms-source-lease-id", source_lease_id);
         }
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// The Renew Lease operation renews an existing lease.
@@ -761,11 +889,12 @@ impl BlobContainerClient {
     /// * `lease_id` - Required. A lease ID for the source path. If specified, the source path must have an active lease and the
     ///   lease ID must match.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.renewLease")]
     pub async fn renew_lease(
         &self,
         lease_id: String,
         options: Option<BlobContainerClientRenewLeaseOptions<'_>>,
-    ) -> Result<Response<BlobContainerClientRenewLeaseResult>> {
+    ) -> Result<Response<BlobContainerClientRenewLeaseResult, NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -782,20 +911,28 @@ impl BlobContainerClient {
         request.insert_header("accept", "application/xml");
         request.insert_header("content-type", "application/xml");
         if let Some(if_modified_since) = options.if_modified_since {
-            request.insert_header("if-modified-since", date::to_rfc7231(&if_modified_since));
+            request.insert_header("if-modified-since", to_rfc7231(&if_modified_since));
         }
         if let Some(if_unmodified_since) = options.if_unmodified_since {
-            request.insert_header(
-                "if-unmodified-since",
-                date::to_rfc7231(&if_unmodified_since),
-            );
+            request.insert_header("if-unmodified-since", to_rfc7231(&if_unmodified_since));
         }
         if let Some(client_request_id) = options.client_request_id {
             request.insert_header("x-ms-client-request-id", client_request_id);
         }
+        request.insert_header("x-ms-lease-action", "renew");
         request.insert_header("x-ms-lease-id", lease_id);
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Restores a previously-deleted container.
@@ -803,10 +940,11 @@ impl BlobContainerClient {
     /// # Arguments
     ///
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.restore")]
     pub async fn restore(
         &self,
         options: Option<BlobContainerClientRestoreOptions<'_>>,
-    ) -> Result<Response<BlobContainerClientRestoreResult>> {
+    ) -> Result<Response<BlobContainerClientRestoreResult, NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -831,7 +969,17 @@ impl BlobContainerClient {
             request.insert_header("x-ms-deleted-container-version", deleted_container_version);
         }
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// sets the permissions for the specified container. The permissions indicate whether blobs in a container may be accessed
@@ -841,11 +989,12 @@ impl BlobContainerClient {
     ///
     /// * `container_acl` - The access control list for the container.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.setAccessPolicy")]
     pub async fn set_access_policy(
         &self,
-        container_acl: RequestContent<Vec<SignedIdentifier>>,
+        container_acl: RequestContent<Vec<SignedIdentifier>, XmlFormat>,
         options: Option<BlobContainerClientSetAccessPolicyOptions<'_>>,
-    ) -> Result<Response<BlobContainerClientSetAccessPolicyResult>> {
+    ) -> Result<Response<BlobContainerClientSetAccessPolicyResult, NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -861,13 +1010,10 @@ impl BlobContainerClient {
         request.insert_header("accept", "application/xml");
         request.insert_header("content-type", "application/xml");
         if let Some(if_modified_since) = options.if_modified_since {
-            request.insert_header("if-modified-since", date::to_rfc7231(&if_modified_since));
+            request.insert_header("if-modified-since", to_rfc7231(&if_modified_since));
         }
         if let Some(if_unmodified_since) = options.if_unmodified_since {
-            request.insert_header(
-                "if-unmodified-since",
-                date::to_rfc7231(&if_unmodified_since),
-            );
+            request.insert_header("if-unmodified-since", to_rfc7231(&if_unmodified_since));
         }
         if let Some(access) = options.access {
             request.insert_header("x-ms-blob-public-access", access.to_string());
@@ -880,18 +1026,31 @@ impl BlobContainerClient {
         }
         request.insert_header("x-ms-version", &self.version);
         request.set_body(container_acl);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// operation sets one or more user-defined name-value pairs for the specified container.
     ///
     /// # Arguments
     ///
+    /// * `metadata` - The metadata headers.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("Storage.Blob.Container.setMetadata")]
     pub async fn set_metadata(
         &self,
+        metadata: HashMap<String, String>,
         options: Option<BlobContainerClientSetMetadataOptions<'_>>,
-    ) -> Result<Response<()>> {
+    ) -> Result<Response<(), NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -907,7 +1066,7 @@ impl BlobContainerClient {
         request.insert_header("accept", "application/xml");
         request.insert_header("content-type", "application/xml");
         if let Some(if_modified_since) = options.if_modified_since {
-            request.insert_header("if-modified-since", date::to_rfc7231(&if_modified_since));
+            request.insert_header("if-modified-since", to_rfc7231(&if_modified_since));
         }
         if let Some(client_request_id) = options.client_request_id {
             request.insert_header("x-ms-client-request-id", client_request_id);
@@ -915,13 +1074,21 @@ impl BlobContainerClient {
         if let Some(lease_id) = options.lease_id {
             request.insert_header("x-ms-lease-id", lease_id);
         }
-        if let Some(metadata) = options.metadata {
-            for (k, v) in &metadata {
-                request.insert_header(format!("x-ms-meta-{}", k), v);
-            }
+        for (k, v) in &metadata {
+            request.insert_header(format!("x-ms-meta-{k}"), v);
         }
         request.insert_header("x-ms-version", &self.version);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 }
 
@@ -929,7 +1096,7 @@ impl Default for BlobContainerClientOptions {
     fn default() -> Self {
         Self {
             client_options: ClientOptions::default(),
-            version: String::from("2025-01-05"),
+            version: String::from("2025-11-05"),
         }
     }
 }

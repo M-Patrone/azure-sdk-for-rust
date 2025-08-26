@@ -17,18 +17,12 @@ use typespec::error::{Error, ErrorKind, Result, ResultExt};
 pub fn new_reqwest_client() -> Arc<dyn HttpClient> {
     debug!("creating an http client using `reqwest`");
 
-    // Set `pool_max_idle_per_host` to `0` to avoid an issue in the underlying
-    // `hyper` library that causes the `reqwest` client to hang in some cases.
+    // Some customers in the past have reported challenges associated with enabling
+    // connection pooling in reqwest. See <https://github.com/hyperium/hyper/issues/2312>
+    // for more details.
     //
-    // See <https://github.com/hyperium/hyper/issues/2312> for more details.
-    #[cfg(not(target_arch = "wasm32"))]
-    let client = ::reqwest::ClientBuilder::new()
-        .pool_max_idle_per_host(0)
-        .build()
-        .expect("failed to build `reqwest` client");
-
-    // `reqwest` does not implement `pool_max_idle_per_host()` on WASM.
-    #[cfg(target_arch = "wasm32")]
+    // Due to the significant performance impact when disabling connection pooling,
+    // it is enabled here by default. See the `azure_core` troubleshooting guide to disable pooling.
     let client = ::reqwest::ClientBuilder::new()
         .build()
         .expect("failed to build `reqwest` client");
@@ -42,7 +36,7 @@ impl HttpClient for ::reqwest::Client {
     async fn execute_request(&self, request: &Request) -> Result<RawResponse> {
         let url = request.url().clone();
         let method = request.method();
-        let mut req = self.request(from_method(*method), url.clone());
+        let mut req = self.request(from_method(method), url.clone());
         for (name, value) in request.headers().iter() {
             req = req.header(name.as_str(), value.as_str());
         }

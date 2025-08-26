@@ -12,7 +12,6 @@ use crate::{
 };
 
 use azure_core::http::{
-    headers,
     request::{options::ContentType, Request},
     response::Response,
     Method,
@@ -263,9 +262,7 @@ impl ContainerClient {
         let options = options.unwrap_or_default();
         let url = self.pipeline.url(&self.items_link);
         let mut req = Request::new(url, Method::Post);
-        if !options.enable_content_response_on_write {
-            req.insert_header(headers::PREFER, constants::PREFER_MINIMAL);
-        }
+        req.insert_headers(&options)?;
         req.insert_headers(&partition_key.into())?;
         req.insert_headers(&ContentType::APPLICATION_JSON)?;
         req.set_json(&item)?;
@@ -355,9 +352,7 @@ impl ContainerClient {
         let link = self.items_link.item(item_id);
         let url = self.pipeline.url(&link);
         let mut req = Request::new(url, Method::Put);
-        if !options.enable_content_response_on_write {
-            req.insert_header(headers::PREFER, constants::PREFER_MINIMAL);
-        }
+        req.insert_headers(&options)?;
         req.insert_headers(&partition_key.into())?;
         req.insert_headers(&ContentType::APPLICATION_JSON)?;
         req.set_json(&item)?;
@@ -444,9 +439,7 @@ impl ContainerClient {
         let options = options.unwrap_or_default();
         let url = self.pipeline.url(&self.items_link);
         let mut req = Request::new(url, Method::Post);
-        if !options.enable_content_response_on_write {
-            req.insert_header(headers::PREFER, constants::PREFER_MINIMAL);
-        }
+        req.insert_headers(&options)?;
         req.insert_header(constants::IS_UPSERT, "true");
         req.insert_headers(&partition_key.into())?;
         req.insert_headers(&ContentType::APPLICATION_JSON)?;
@@ -501,6 +494,7 @@ impl ContainerClient {
         let link = self.items_link.item(item_id);
         let url = self.pipeline.url(&link);
         let mut req = Request::new(url, Method::Get);
+        req.insert_headers(&options)?;
         req.insert_headers(&partition_key.into())?;
         self.pipeline
             .send(options.method_options.context, &mut req, link)
@@ -537,6 +531,7 @@ impl ContainerClient {
         let link = self.items_link.item(item_id);
         let url = self.pipeline.url(&link);
         let mut req = Request::new(url, Method::Delete);
+        req.insert_headers(&options)?;
         req.insert_headers(&partition_key.into())?;
         self.pipeline
             .send(options.method_options.context, &mut req, link)
@@ -610,9 +605,7 @@ impl ContainerClient {
         let link = self.items_link.item(item_id);
         let url = self.pipeline.url(&link);
         let mut req = Request::new(url, Method::Patch);
-        if !options.enable_content_response_on_write {
-            req.insert_header(headers::PREFER, constants::PREFER_MINIMAL);
-        }
+        req.insert_headers(&options)?;
         req.insert_headers(&partition_key.into())?;
         req.insert_headers(&ContentType::APPLICATION_JSON)?;
         req.set_json(&patch)?;

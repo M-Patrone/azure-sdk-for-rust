@@ -16,17 +16,19 @@ use crate::generated::models::{
 };
 use azure_core::{
     credentials::TokenCredential,
+    error::{ErrorKind, HttpError},
     fmt::SafeDebug,
     http::{
         policies::{BearerTokenCredentialPolicy, Policy},
-        ClientOptions, Context, Method, Pager, PagerResult, Pipeline, RawResponse, Request,
-        RequestContent, Response, Url,
+        ClientOptions, Context, Method, NoFormat, Pager, PagerResult, PagerState, Pipeline,
+        RawResponse, Request, RequestContent, Response, Url,
     },
-    json, Result,
+    json, tracing, Error, Result,
 };
 use std::sync::Arc;
 
 /// The key vault client performs cryptographic key operations and vault operations against the Key Vault service.
+#[tracing::client]
 pub struct SecretClient {
     pub(crate) api_version: String,
     pub(crate) endpoint: Url,
@@ -51,6 +53,7 @@ impl SecretClient {
     /// * `credential` - An implementation of [`TokenCredential`](azure_core::credentials::TokenCredential) that can provide an
     ///   Entra ID token to use when authenticating.
     /// * `options` - Optional configuration for the client.
+    #[tracing::new("azure_security_keyvault_secrets")]
     pub fn new(
         endpoint: &str,
         credential: Arc<dyn TokenCredential>,
@@ -96,6 +99,7 @@ impl SecretClient {
     ///
     /// * `secret_name` - The name of the secret.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("KeyVault.backupSecret")]
     pub async fn backup_secret(
         &self,
         secret_name: &str,
@@ -111,7 +115,17 @@ impl SecretClient {
             .append_pair("api-version", &self.api_version);
         let mut request = Request::new(url, Method::Post);
         request.insert_header("accept", "application/json");
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Deletes a secret from a specified key vault.
@@ -123,6 +137,7 @@ impl SecretClient {
     ///
     /// * `secret_name` - The name of the secret.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("KeyVault.deleteSecret")]
     pub async fn delete_secret(
         &self,
         secret_name: &str,
@@ -138,7 +153,17 @@ impl SecretClient {
             .append_pair("api-version", &self.api_version);
         let mut request = Request::new(url, Method::Delete);
         request.insert_header("accept", "application/json");
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Gets the specified deleted secret.
@@ -150,6 +175,7 @@ impl SecretClient {
     ///
     /// * `secret_name` - The name of the secret.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("KeyVault.getDeletedSecret")]
     pub async fn get_deleted_secret(
         &self,
         secret_name: &str,
@@ -165,7 +191,17 @@ impl SecretClient {
             .append_pair("api-version", &self.api_version);
         let mut request = Request::new(url, Method::Get);
         request.insert_header("accept", "application/json");
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Get a specified secret from a given key vault.
@@ -178,6 +214,7 @@ impl SecretClient {
     /// * `secret_version` - The version of the secret. This URI fragment is optional. If not specified, the latest version of
     ///   the secret is returned.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("KeyVault.getSecret")]
     pub async fn get_secret(
         &self,
         secret_name: &str,
@@ -195,7 +232,17 @@ impl SecretClient {
             .append_pair("api-version", &self.api_version);
         let mut request = Request::new(url, Method::Get);
         request.insert_header("accept", "application/json");
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Lists deleted secrets for the specified vault.
@@ -206,6 +253,7 @@ impl SecretClient {
     /// # Arguments
     ///
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("KeyVault.getDeletedSecrets")]
     pub fn list_deleted_secret_properties(
         &self,
         options: Option<SecretClientListDeletedSecretPropertiesOptions<'_>>,
@@ -223,9 +271,9 @@ impl SecretClient {
                 .append_pair("maxresults", &maxresults.to_string());
         }
         let api_version = self.api_version.clone();
-        Ok(Pager::from_callback(move |next_link: Option<Url>| {
+        Ok(Pager::from_callback(move |next_link: PagerState<Url>| {
             let url = match next_link {
-                Some(next_link) => {
+                PagerState::More(next_link) => {
                     let qp = next_link
                         .query_pairs()
                         .filter(|(name, _)| name.ne("api-version"));
@@ -237,27 +285,33 @@ impl SecretClient {
                         .append_pair("api-version", &api_version);
                     next_link
                 }
-                None => first_url.clone(),
+                PagerState::Initial => first_url.clone(),
             };
             let mut request = Request::new(url, Method::Get);
             request.insert_header("accept", "application/json");
             let ctx = options.method_options.context.clone();
             let pipeline = pipeline.clone();
             async move {
-                let rsp: Response<ListDeletedSecretPropertiesResult> =
-                    pipeline.send(&ctx, &mut request).await?.into();
+                let rsp: RawResponse = pipeline.send(&ctx, &mut request).await?;
+                if !rsp.status().is_success() {
+                    let status = rsp.status();
+                    let http_error = HttpError::new(rsp).await;
+                    let error_kind = ErrorKind::http_response(
+                        status,
+                        http_error.error_code().map(std::borrow::ToOwned::to_owned),
+                    );
+                    return Err(Error::new(error_kind, http_error));
+                }
                 let (status, headers, body) = rsp.deconstruct();
                 let bytes = body.collect().await?;
                 let res: ListDeletedSecretPropertiesResult = json::from_json(&bytes)?;
                 let rsp = RawResponse::from_bytes(status, headers, bytes).into();
-                let next_link = res.next_link.unwrap_or_default();
-                Ok(if next_link.is_empty() {
-                    PagerResult::Done { response: rsp }
-                } else {
-                    PagerResult::More {
+                Ok(match res.next_link {
+                    Some(next_link) if !next_link.is_empty() => PagerResult::More {
                         response: rsp,
-                        next: next_link.parse()?,
-                    }
+                        continuation: next_link.parse()?,
+                    },
+                    _ => PagerResult::Done { response: rsp },
                 })
             }
         }))
@@ -272,6 +326,7 @@ impl SecretClient {
     /// # Arguments
     ///
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("KeyVault.getSecrets")]
     pub fn list_secret_properties(
         &self,
         options: Option<SecretClientListSecretPropertiesOptions<'_>>,
@@ -289,9 +344,9 @@ impl SecretClient {
                 .append_pair("maxresults", &maxresults.to_string());
         }
         let api_version = self.api_version.clone();
-        Ok(Pager::from_callback(move |next_link: Option<Url>| {
+        Ok(Pager::from_callback(move |next_link: PagerState<Url>| {
             let url = match next_link {
-                Some(next_link) => {
+                PagerState::More(next_link) => {
                     let qp = next_link
                         .query_pairs()
                         .filter(|(name, _)| name.ne("api-version"));
@@ -303,27 +358,33 @@ impl SecretClient {
                         .append_pair("api-version", &api_version);
                     next_link
                 }
-                None => first_url.clone(),
+                PagerState::Initial => first_url.clone(),
             };
             let mut request = Request::new(url, Method::Get);
             request.insert_header("accept", "application/json");
             let ctx = options.method_options.context.clone();
             let pipeline = pipeline.clone();
             async move {
-                let rsp: Response<ListSecretPropertiesResult> =
-                    pipeline.send(&ctx, &mut request).await?.into();
+                let rsp: RawResponse = pipeline.send(&ctx, &mut request).await?;
+                if !rsp.status().is_success() {
+                    let status = rsp.status();
+                    let http_error = HttpError::new(rsp).await;
+                    let error_kind = ErrorKind::http_response(
+                        status,
+                        http_error.error_code().map(std::borrow::ToOwned::to_owned),
+                    );
+                    return Err(Error::new(error_kind, http_error));
+                }
                 let (status, headers, body) = rsp.deconstruct();
                 let bytes = body.collect().await?;
                 let res: ListSecretPropertiesResult = json::from_json(&bytes)?;
                 let rsp = RawResponse::from_bytes(status, headers, bytes).into();
-                let next_link = res.next_link.unwrap_or_default();
-                Ok(if next_link.is_empty() {
-                    PagerResult::Done { response: rsp }
-                } else {
-                    PagerResult::More {
+                Ok(match res.next_link {
+                    Some(next_link) if !next_link.is_empty() => PagerResult::More {
                         response: rsp,
-                        next: next_link.parse()?,
-                    }
+                        continuation: next_link.parse()?,
+                    },
+                    _ => PagerResult::Done { response: rsp },
                 })
             }
         }))
@@ -338,6 +399,7 @@ impl SecretClient {
     ///
     /// * `secret_name` - The name of the secret.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("KeyVault.getSecretVersions")]
     pub fn list_secret_properties_versions(
         &self,
         secret_name: &str,
@@ -358,9 +420,9 @@ impl SecretClient {
                 .append_pair("maxresults", &maxresults.to_string());
         }
         let api_version = self.api_version.clone();
-        Ok(Pager::from_callback(move |next_link: Option<Url>| {
+        Ok(Pager::from_callback(move |next_link: PagerState<Url>| {
             let url = match next_link {
-                Some(next_link) => {
+                PagerState::More(next_link) => {
                     let qp = next_link
                         .query_pairs()
                         .filter(|(name, _)| name.ne("api-version"));
@@ -372,27 +434,33 @@ impl SecretClient {
                         .append_pair("api-version", &api_version);
                     next_link
                 }
-                None => first_url.clone(),
+                PagerState::Initial => first_url.clone(),
             };
             let mut request = Request::new(url, Method::Get);
             request.insert_header("accept", "application/json");
             let ctx = options.method_options.context.clone();
             let pipeline = pipeline.clone();
             async move {
-                let rsp: Response<ListSecretPropertiesResult> =
-                    pipeline.send(&ctx, &mut request).await?.into();
+                let rsp: RawResponse = pipeline.send(&ctx, &mut request).await?;
+                if !rsp.status().is_success() {
+                    let status = rsp.status();
+                    let http_error = HttpError::new(rsp).await;
+                    let error_kind = ErrorKind::http_response(
+                        status,
+                        http_error.error_code().map(std::borrow::ToOwned::to_owned),
+                    );
+                    return Err(Error::new(error_kind, http_error));
+                }
                 let (status, headers, body) = rsp.deconstruct();
                 let bytes = body.collect().await?;
                 let res: ListSecretPropertiesResult = json::from_json(&bytes)?;
                 let rsp = RawResponse::from_bytes(status, headers, bytes).into();
-                let next_link = res.next_link.unwrap_or_default();
-                Ok(if next_link.is_empty() {
-                    PagerResult::Done { response: rsp }
-                } else {
-                    PagerResult::More {
+                Ok(match res.next_link {
+                    Some(next_link) if !next_link.is_empty() => PagerResult::More {
                         response: rsp,
-                        next: next_link.parse()?,
-                    }
+                        continuation: next_link.parse()?,
+                    },
+                    _ => PagerResult::Done { response: rsp },
                 })
             }
         }))
@@ -407,11 +475,12 @@ impl SecretClient {
     ///
     /// * `secret_name` - The name of the secret.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("KeyVault.purgeDeletedSecret")]
     pub async fn purge_deleted_secret(
         &self,
         secret_name: &str,
         options: Option<SecretClientPurgeDeletedSecretOptions<'_>>,
-    ) -> Result<Response<()>> {
+    ) -> Result<Response<(), NoFormat>> {
         let options = options.unwrap_or_default();
         let ctx = Context::with_context(&options.method_options.context);
         let mut url = self.endpoint.clone();
@@ -422,7 +491,17 @@ impl SecretClient {
             .append_pair("api-version", &self.api_version);
         let mut request = Request::new(url, Method::Delete);
         request.insert_header("accept", "application/json");
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Recovers the deleted secret to the latest version.
@@ -434,6 +513,7 @@ impl SecretClient {
     ///
     /// * `secret_name` - The name of the deleted secret.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("KeyVault.recoverDeletedSecret")]
     pub async fn recover_deleted_secret(
         &self,
         secret_name: &str,
@@ -449,7 +529,17 @@ impl SecretClient {
             .append_pair("api-version", &self.api_version);
         let mut request = Request::new(url, Method::Post);
         request.insert_header("accept", "application/json");
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Restores a backed up secret to a vault.
@@ -460,6 +550,7 @@ impl SecretClient {
     ///
     /// * `parameters` - The parameters to restore the secret.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("KeyVault.restoreSecret")]
     pub async fn restore_secret(
         &self,
         parameters: RequestContent<RestoreSecretParameters>,
@@ -475,7 +566,17 @@ impl SecretClient {
         request.insert_header("accept", "application/json");
         request.insert_header("content-type", "application/json");
         request.set_body(parameters);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Sets a secret in a specified key vault.
@@ -489,6 +590,7 @@ impl SecretClient {
     ///   service. The value provided should not include personally identifiable or sensitive information.
     /// * `parameters` - The parameters for setting the secret.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("KeyVault.setSecret")]
     pub async fn set_secret(
         &self,
         secret_name: &str,
@@ -507,7 +609,17 @@ impl SecretClient {
         request.insert_header("accept", "application/json");
         request.insert_header("content-type", "application/json");
         request.set_body(parameters);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 
     /// Updates the attributes associated with a specified secret in a given key vault.
@@ -521,6 +633,7 @@ impl SecretClient {
     /// * `secret_version` - The version of the secret.
     /// * `parameters` - The parameters for update secret operation.
     /// * `options` - Optional parameters for the request.
+    #[tracing::function("KeyVault.updateSecret")]
     pub async fn update_secret_properties(
         &self,
         secret_name: &str,
@@ -541,7 +654,17 @@ impl SecretClient {
         request.insert_header("accept", "application/json");
         request.insert_header("content-type", "application/json");
         request.set_body(parameters);
-        self.pipeline.send(&ctx, &mut request).await.map(Into::into)
+        let rsp = self.pipeline.send(&ctx, &mut request).await?;
+        if !rsp.status().is_success() {
+            let status = rsp.status();
+            let http_error = HttpError::new(rsp).await;
+            let error_kind = ErrorKind::http_response(
+                status,
+                http_error.error_code().map(std::borrow::ToOwned::to_owned),
+            );
+            return Err(Error::new(error_kind, http_error));
+        }
+        Ok(rsp.into())
     }
 }
 

@@ -6,10 +6,13 @@
 use super::{
     models_serde, CertificatePolicyAction, CurveName, DeletionRecoveryLevel, KeyType, KeyUsageType,
 };
-use azure_core::{base64, fmt::SafeDebug};
+use azure_core::{
+    base64::{deserialize, deserialize_url_safe, serialize, serialize_url_safe},
+    fmt::SafeDebug,
+    time::OffsetDateTime,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use time::OffsetDateTime;
 
 /// Details of the organization administrator of the certificate issuer.
 #[derive(Clone, Default, Deserialize, SafeDebug, Serialize)]
@@ -38,8 +41,8 @@ pub struct BackupCertificateResult {
     /// The backup blob containing the backed up certificate.
     #[serde(
         default,
-        deserialize_with = "base64::deserialize_url_safe",
-        serialize_with = "base64::serialize_url_safe",
+        deserialize_with = "deserialize_url_safe",
+        serialize_with = "serialize_url_safe",
         skip_serializing_if = "Option::is_none"
     )]
     pub value: Option<Vec<u8>>,
@@ -56,8 +59,8 @@ pub struct Certificate {
     /// CER contents of x509 certificate.
     #[serde(
         default,
-        deserialize_with = "base64::deserialize",
-        serialize_with = "base64::serialize",
+        deserialize_with = "deserialize",
+        serialize_with = "serialize",
         skip_serializing_if = "Option::is_none"
     )]
     pub cer: Option<Vec<u8>>,
@@ -94,9 +97,9 @@ pub struct Certificate {
     /// Thumbprint of the certificate.
     #[serde(
         default,
-        deserialize_with = "base64::deserialize_url_safe",
+        deserialize_with = "deserialize_url_safe",
         rename = "x5t",
-        serialize_with = "base64::serialize_url_safe",
+        serialize_with = "serialize_url_safe",
         skip_serializing_if = "Option::is_none"
     )]
     pub x509_thumbprint: Option<Vec<u8>>,
@@ -109,7 +112,7 @@ pub struct CertificateAttributes {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::unix_time::option"
+        with = "azure_core::time::unix_time::option"
     )]
     pub created: Option<OffsetDateTime>,
 
@@ -122,7 +125,7 @@ pub struct CertificateAttributes {
         default,
         rename = "exp",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::unix_time::option"
+        with = "azure_core::time::unix_time::option"
     )]
     pub expires: Option<OffsetDateTime>,
 
@@ -131,7 +134,7 @@ pub struct CertificateAttributes {
         default,
         rename = "nbf",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::unix_time::option"
+        with = "azure_core::time::unix_time::option"
     )]
     pub not_before: Option<OffsetDateTime>,
 
@@ -149,7 +152,7 @@ pub struct CertificateAttributes {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::unix_time::option"
+        with = "azure_core::time::unix_time::option"
     )]
     pub updated: Option<OffsetDateTime>,
 }
@@ -165,8 +168,8 @@ pub struct CertificateOperation {
     /// The certificate signing request (CSR) that is being used in the certificate operation.
     #[serde(
         default,
-        deserialize_with = "base64::deserialize",
-        serialize_with = "base64::serialize",
+        deserialize_with = "deserialize",
+        serialize_with = "serialize",
         skip_serializing_if = "Option::is_none"
     )]
     pub csr: Option<Vec<u8>>,
@@ -256,9 +259,9 @@ pub struct CertificateProperties {
     /// Thumbprint of the certificate.
     #[serde(
         default,
-        deserialize_with = "base64::deserialize_url_safe",
+        deserialize_with = "deserialize_url_safe",
         rename = "x5t",
-        serialize_with = "base64::serialize_url_safe",
+        serialize_with = "serialize_url_safe",
         skip_serializing_if = "Option::is_none"
     )]
     pub x509_thumbprint: Option<Vec<u8>>,
@@ -325,8 +328,8 @@ pub struct DeletedCertificate {
     /// CER contents of x509 certificate.
     #[serde(
         default,
-        deserialize_with = "base64::deserialize",
-        serialize_with = "base64::serialize",
+        deserialize_with = "deserialize",
+        serialize_with = "serialize",
         skip_serializing_if = "Option::is_none"
     )]
     pub cer: Option<Vec<u8>>,
@@ -340,7 +343,7 @@ pub struct DeletedCertificate {
         default,
         rename = "deletedDate",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::unix_time::option"
+        with = "azure_core::time::unix_time::option"
     )]
     pub deleted_date: Option<OffsetDateTime>,
 
@@ -370,7 +373,7 @@ pub struct DeletedCertificate {
         default,
         rename = "scheduledPurgeDate",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::unix_time::option"
+        with = "azure_core::time::unix_time::option"
     )]
     pub scheduled_purge_date: Option<OffsetDateTime>,
 
@@ -385,9 +388,9 @@ pub struct DeletedCertificate {
     /// Thumbprint of the certificate.
     #[serde(
         default,
-        deserialize_with = "base64::deserialize_url_safe",
+        deserialize_with = "deserialize_url_safe",
         rename = "x5t",
-        serialize_with = "base64::serialize_url_safe",
+        serialize_with = "serialize_url_safe",
         skip_serializing_if = "Option::is_none"
     )]
     pub x509_thumbprint: Option<Vec<u8>>,
@@ -406,7 +409,7 @@ pub struct DeletedCertificateProperties {
         default,
         rename = "deletedDate",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::unix_time::option"
+        with = "azure_core::time::unix_time::option"
     )]
     pub deleted_date: Option<OffsetDateTime>,
 
@@ -423,7 +426,7 @@ pub struct DeletedCertificateProperties {
         default,
         rename = "scheduledPurgeDate",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::unix_time::option"
+        with = "azure_core::time::unix_time::option"
     )]
     pub scheduled_purge_date: Option<OffsetDateTime>,
 
@@ -434,9 +437,9 @@ pub struct DeletedCertificateProperties {
     /// Thumbprint of the certificate.
     #[serde(
         default,
-        deserialize_with = "base64::deserialize_url_safe",
+        deserialize_with = "deserialize_url_safe",
         rename = "x5t",
-        serialize_with = "base64::serialize_url_safe",
+        serialize_with = "serialize_url_safe",
         skip_serializing_if = "Option::is_none"
     )]
     pub x509_thumbprint: Option<Vec<u8>>,
@@ -503,7 +506,7 @@ pub struct IssuerAttributes {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::unix_time::option"
+        with = "azure_core::time::unix_time::option"
     )]
     pub created: Option<OffsetDateTime>,
 
@@ -515,7 +518,7 @@ pub struct IssuerAttributes {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::unix_time::option"
+        with = "azure_core::time::unix_time::option"
     )]
     pub updated: Option<OffsetDateTime>,
 }
@@ -715,9 +718,9 @@ pub struct RestoreCertificateParameters {
     /// The backup blob associated with a certificate bundle.
     #[serde(
         default,
-        deserialize_with = "base64::deserialize_url_safe",
+        deserialize_with = "deserialize_url_safe",
         rename = "value",
-        serialize_with = "base64::serialize_url_safe",
+        serialize_with = "serialize_url_safe",
         skip_serializing_if = "Option::is_none"
     )]
     pub certificate_backup: Option<Vec<u8>>,

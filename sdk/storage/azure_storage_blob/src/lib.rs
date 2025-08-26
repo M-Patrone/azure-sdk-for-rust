@@ -6,29 +6,13 @@
 #![doc = include_str!("../README.md")]
 #![allow(dead_code)]
 #![allow(unused_imports)]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 pub mod clients;
+#[expect(deprecated, reason = "requires emitter update")]
 mod generated;
+mod parsers;
 mod pipeline;
-
 pub use clients::*;
-
-pub mod models {
-    pub use crate::generated::models::{
-        AccessTier, ArchiveStatus, BlobClientDeleteOptions, BlobClientDownloadOptions,
-        BlobClientDownloadResult, BlobClientDownloadResultHeaders, BlobClientGetPropertiesOptions,
-        BlobClientGetPropertiesResult, BlobClientGetPropertiesResultHeaders,
-        BlobClientSetMetadataOptions, BlobClientSetPropertiesOptions, BlobClientSetTierOptions,
-        BlobContainerClientCreateOptions, BlobContainerClientDeleteOptions,
-        BlobContainerClientGetPropertiesOptions, BlobContainerClientGetPropertiesResult,
-        BlobContainerClientGetPropertiesResultHeaders,
-        BlobContainerClientListBlobFlatSegmentOptions, BlobContainerClientSetMetadataOptions,
-        BlobImmutabilityPolicyMode, BlobServiceClientGetPropertiesOptions, BlobType,
-        BlockBlobClientCommitBlockListOptions, BlockBlobClientCommitBlockListResult,
-        BlockBlobClientGetBlockListOptions, BlockBlobClientStageBlockOptions,
-        BlockBlobClientStageBlockResult, BlockBlobClientUploadOptions, BlockBlobClientUploadResult,
-        BlockList, BlockListType, BlockLookupList, CopyStatus, LeaseState, LeaseStatus,
-        ListBlobsFlatSegmentResponse, PublicAccessType, RehydratePriority,
-        StorageServiceProperties,
-    };
-}
+pub use parsers::*;
+pub mod models;

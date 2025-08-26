@@ -6,17 +6,20 @@
 use super::{
     models_serde,
     xml_helpers::{
-        Blob_tag_setTag, BlobsBlob, Clear_rangeClearRange, Committed_blocksBlock, CorsCorsRule,
-        Page_rangePageRange, SchemaField, Uncommitted_blocksBlock,
+        Blob_tag_setTag, BlobsBlob, Committed_blocksBlock, Container_itemsContainer, CorsCorsRule,
+        SchemaField, Uncommitted_blocksBlock,
     },
     AccessTier, ArchiveStatus, BlobImmutabilityPolicyMode, BlobType, CopyStatus,
     GeoReplicationStatusType, LeaseDuration, LeaseState, LeaseStatus, PublicAccessType,
     QueryRequestType, QueryType, RehydratePriority,
 };
-use azure_core::{base64, fmt::SafeDebug};
+use azure_core::{
+    base64::{deserialize, serialize},
+    fmt::SafeDebug,
+    time::OffsetDateTime,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use time::OffsetDateTime;
 
 /// Represents an access policy.
 #[derive(Clone, Default, Deserialize, SafeDebug, Serialize)]
@@ -26,7 +29,7 @@ pub struct AccessPolicy {
         default,
         rename = "Expiry",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc3339::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub expiry: Option<OffsetDateTime>,
 
@@ -39,7 +42,7 @@ pub struct AccessPolicy {
         default,
         rename = "Start",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc3339::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub start: Option<OffsetDateTime>,
 }
@@ -155,10 +158,6 @@ pub struct BlobClientSetImmutabilityPolicyResult;
 #[derive(SafeDebug)]
 pub struct BlobClientSetLegalHoldResult;
 
-/// Contains results for `BlobClient::set_tags()`
-#[derive(SafeDebug)]
-pub struct BlobClientSetTagsResult;
-
 /// Contains results for `BlobClient::start_copy_from_url()`
 #[derive(SafeDebug)]
 pub struct BlobClientStartCopyFromUrlResult;
@@ -259,10 +258,7 @@ pub struct BlobItemInternal {
     pub name: Option<BlobName>,
 
     /// The object replication metadata of the blob.
-    #[serde(
-        rename = "ObjectReplicationMetadata",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "OrMetadata", skip_serializing_if = "Option::is_none")]
     pub object_replication_metadata: Option<ObjectReplicationMetadata>,
 
     /// The properties of the blob.
@@ -323,7 +319,7 @@ pub struct BlobPropertiesInternal {
         default,
         rename = "AccessTierChangeTime",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc7231::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub access_tier_change_time: Option<OffsetDateTime>,
 
@@ -372,9 +368,9 @@ pub struct BlobPropertiesInternal {
     /// The content MD5 of the blob.
     #[serde(
         default,
-        deserialize_with = "base64::deserialize",
+        deserialize_with = "deserialize",
         rename = "Content-MD5",
-        serialize_with = "base64::serialize",
+        serialize_with = "serialize",
         skip_serializing_if = "Option::is_none"
     )]
     pub content_md5: Option<Vec<u8>>,
@@ -388,7 +384,7 @@ pub struct BlobPropertiesInternal {
         default,
         rename = "CopyCompletionTime",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc7231::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub copy_completion_time: Option<OffsetDateTime>,
 
@@ -420,7 +416,7 @@ pub struct BlobPropertiesInternal {
         default,
         rename = "Creation-Time",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc7231::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub creation_time: Option<OffsetDateTime>,
 
@@ -436,7 +432,7 @@ pub struct BlobPropertiesInternal {
         default,
         rename = "DeletedTime",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc7231::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub deleted_time: Option<OffsetDateTime>,
 
@@ -452,7 +448,7 @@ pub struct BlobPropertiesInternal {
     pub encryption_scope: Option<String>,
 
     /// The blog ETag.
-    #[serde(rename = "ETag", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "Etag", skip_serializing_if = "Option::is_none")]
     pub etag: Option<String>,
 
     /// The expire time of the blob.
@@ -460,7 +456,7 @@ pub struct BlobPropertiesInternal {
         default,
         rename = "Expiry-Time",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc7231::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub expires_on: Option<OffsetDateTime>,
 
@@ -469,7 +465,7 @@ pub struct BlobPropertiesInternal {
         default,
         rename = "ImmutabilityPolicyUntilDate",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc7231::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub immutability_policy_expires_on: Option<OffsetDateTime>,
 
@@ -493,7 +489,7 @@ pub struct BlobPropertiesInternal {
         default,
         rename = "LastAccessTime",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc7231::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub last_accessed_on: Option<OffsetDateTime>,
 
@@ -502,7 +498,7 @@ pub struct BlobPropertiesInternal {
         default,
         rename = "Last-Modified",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc7231::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub last_modified: Option<OffsetDateTime>,
 
@@ -546,6 +542,51 @@ pub struct BlobPropertiesInternal {
 #[derive(SafeDebug)]
 pub struct BlobServiceClientGetAccountInfoResult;
 
+/// The service properties.
+#[derive(Clone, Default, Deserialize, SafeDebug, Serialize)]
+#[serde(rename = "StorageServiceProperties")]
+pub struct BlobServiceProperties {
+    /// The CORS properties.
+    #[serde(
+        default,
+        deserialize_with = "CorsCorsRule::unwrap",
+        rename = "Cors",
+        serialize_with = "CorsCorsRule::wrap",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cors: Option<Vec<CorsRule>>,
+
+    /// The default service version.
+    #[serde(
+        rename = "DefaultServiceVersion",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub default_service_version: Option<String>,
+
+    /// The delete retention policy.
+    #[serde(
+        rename = "DeleteRetentionPolicy",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub delete_retention_policy: Option<RetentionPolicy>,
+
+    /// The hour metrics properties.
+    #[serde(rename = "HourMetrics", skip_serializing_if = "Option::is_none")]
+    pub hour_metrics: Option<Metrics>,
+
+    /// The logging properties.
+    #[serde(rename = "Logging", skip_serializing_if = "Option::is_none")]
+    pub logging: Option<Logging>,
+
+    /// The minute metrics properties.
+    #[serde(rename = "MinuteMetrics", skip_serializing_if = "Option::is_none")]
+    pub minute_metrics: Option<Metrics>,
+
+    /// The static website properties.
+    #[serde(rename = "StaticWebsite", skip_serializing_if = "Option::is_none")]
+    pub static_website: Option<StaticWebsite>,
+}
+
 /// The blob tags.
 #[derive(Clone, Default, Deserialize, SafeDebug, Serialize)]
 #[serde(rename = "Tag")]
@@ -581,9 +622,9 @@ pub struct Block {
     /// The base64 encoded block ID.
     #[serde(
         default,
-        deserialize_with = "base64::deserialize",
+        deserialize_with = "deserialize",
         rename = "Name",
-        serialize_with = "base64::serialize",
+        serialize_with = "serialize",
         skip_serializing_if = "Option::is_none"
     )]
     pub name: Option<Vec<u8>>,
@@ -597,10 +638,6 @@ pub struct Block {
 #[derive(SafeDebug)]
 pub struct BlockBlobClientCommitBlockListResult;
 
-/// Contains results for `BlockBlobClient::put_blob_from_url()`
-#[derive(SafeDebug)]
-pub struct BlockBlobClientPutBlobFromUrlResult;
-
 /// Contains results for `BlockBlobClient::query()`
 #[derive(SafeDebug)]
 pub struct BlockBlobClientQueryResult;
@@ -612,6 +649,10 @@ pub struct BlockBlobClientStageBlockFromUrlResult;
 /// Contains results for `BlockBlobClient::stage_block()`
 #[derive(SafeDebug)]
 pub struct BlockBlobClientStageBlockResult;
+
+/// Contains results for `BlockBlobClient::upload_blob_from_url()`
+#[derive(SafeDebug)]
+pub struct BlockBlobClientUploadBlobFromUrlResult;
 
 /// Contains results for `BlockBlobClient::upload()`
 #[derive(SafeDebug)]
@@ -729,7 +770,7 @@ pub struct ContainerProperties {
         default,
         rename = "DeletedTime",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc7231::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub deleted_time: Option<OffsetDateTime>,
 
@@ -760,7 +801,7 @@ pub struct ContainerProperties {
         default,
         rename = "Last-Modified",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc7231::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub last_modified: Option<OffsetDateTime>,
 
@@ -909,7 +950,7 @@ pub struct GeoReplication {
         default,
         rename = "LastSyncTime",
         skip_serializing_if = "Option::is_none",
-        with = "azure_core::date::rfc7231::option"
+        with = "azure_core::time::rfc7231::option"
     )]
     pub last_sync_time: Option<OffsetDateTime>,
 
@@ -1016,7 +1057,12 @@ pub struct ListBlobsHierarchySegmentResponse {
 #[serde(rename = "EnumerationResults")]
 pub struct ListContainersSegmentResponse {
     /// The container segment.
-    #[serde(default, rename = "Containers")]
+    #[serde(
+        default,
+        deserialize_with = "Container_itemsContainer::unwrap",
+        rename = "Containers",
+        serialize_with = "Container_itemsContainer::wrap"
+    )]
     pub container_items: Vec<ContainerItem>,
 
     /// The marker of the containers.
@@ -1106,9 +1152,9 @@ pub struct PageBlobClientCreateResult;
 #[derive(SafeDebug)]
 pub struct PageBlobClientResizeResult;
 
-/// Contains results for `PageBlobClient::update_sequence_number()`
+/// Contains results for `PageBlobClient::set_sequence_number()`
 #[derive(SafeDebug)]
-pub struct PageBlobClientUpdateSequenceNumberResult;
+pub struct PageBlobClientSetSequenceNumberResult;
 
 /// Contains results for `PageBlobClient::upload_pages_from_url()`
 #[derive(SafeDebug)]
@@ -1123,13 +1169,7 @@ pub struct PageBlobClientUploadPagesResult;
 #[non_exhaustive]
 pub struct PageList {
     /// The clear ranges.
-    #[serde(
-        default,
-        deserialize_with = "Clear_rangeClearRange::unwrap",
-        rename = "ClearRange",
-        serialize_with = "Clear_rangeClearRange::wrap",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "ClearRange", skip_serializing_if = "Option::is_none")]
     pub clear_range: Option<Vec<ClearRange>>,
 
     /// The next marker.
@@ -1137,13 +1177,7 @@ pub struct PageList {
     pub next_marker: Option<String>,
 
     /// The page ranges.
-    #[serde(
-        default,
-        deserialize_with = "Page_rangePageRange::unwrap",
-        rename = "PageRange",
-        serialize_with = "Page_rangePageRange::wrap",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "PageRange", skip_serializing_if = "Option::is_none")]
     pub page_range: Option<Vec<PageRange>>,
 }
 
@@ -1286,50 +1320,6 @@ pub struct StaticWebsite {
     pub index_document: Option<String>,
 }
 
-/// The service properties.
-#[derive(Clone, Default, Deserialize, SafeDebug, Serialize)]
-pub struct StorageServiceProperties {
-    /// The CORS properties.
-    #[serde(
-        default,
-        deserialize_with = "CorsCorsRule::unwrap",
-        rename = "Cors",
-        serialize_with = "CorsCorsRule::wrap",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub cors: Option<Vec<CorsRule>>,
-
-    /// The default service version.
-    #[serde(
-        rename = "DefaultServiceVersion",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub default_service_version: Option<String>,
-
-    /// The delete retention policy.
-    #[serde(
-        rename = "DeleteRetentionPolicy",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub delete_retention_policy: Option<RetentionPolicy>,
-
-    /// The hour metrics properties.
-    #[serde(rename = "HourMetrics", skip_serializing_if = "Option::is_none")]
-    pub hour_metrics: Option<Metrics>,
-
-    /// The logging properties.
-    #[serde(rename = "Logging", skip_serializing_if = "Option::is_none")]
-    pub logging: Option<Logging>,
-
-    /// The minute metrics properties.
-    #[serde(rename = "MinuteMetrics", skip_serializing_if = "Option::is_none")]
-    pub minute_metrics: Option<Metrics>,
-
-    /// The static website properties.
-    #[serde(rename = "StaticWebsite", skip_serializing_if = "Option::is_none")]
-    pub static_website: Option<StaticWebsite>,
-}
-
 /// Stats for the storage service.
 #[derive(Clone, Default, Deserialize, SafeDebug, Serialize)]
 #[non_exhaustive]
@@ -1370,9 +1360,9 @@ pub struct UserDelegationKey {
     /// The key as a base64 string.
     #[serde(
         default,
-        deserialize_with = "base64::deserialize",
+        deserialize_with = "deserialize",
         rename = "Value",
-        serialize_with = "base64::serialize",
+        serialize_with = "serialize",
         skip_serializing_if = "Option::is_none"
     )]
     pub value: Option<Vec<u8>>,

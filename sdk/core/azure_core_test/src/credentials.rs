@@ -4,15 +4,25 @@
 //! Credentials for live and recorded tests.
 use azure_core::{
     credentials::{AccessToken, Secret, TokenCredential, TokenRequestOptions},
-    date::OffsetDateTime,
-    error::ErrorKind,
+    time::{Duration, OffsetDateTime},
 };
-use azure_identity::{AzurePipelinesCredential, DefaultAzureCredential, TokenCredentialOptions};
-use std::{env, sync::Arc, time::Duration};
+#[cfg(target_arch = "wasm32")]
+use azure_core::{error::ErrorKind, Error};
+#[cfg(not(target_arch = "wasm32"))]
+use azure_identity::DeveloperToolsCredential;
+use azure_identity::{AzurePipelinesCredential, TokenCredentialOptions};
+use std::{env, sync::Arc};
 
 /// A mock [`TokenCredential`] useful for testing.
 #[derive(Clone, Debug, Default)]
 pub struct MockCredential;
+
+impl MockCredential {
+    /// Create a new `MockCredential`.
+    pub fn new() -> azure_core::Result<Arc<Self>> {
+        Ok(Arc::new(MockCredential {}))
+    }
+}
 
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
@@ -23,11 +33,8 @@ impl TokenCredential for MockCredential {
         _: Option<TokenRequestOptions>,
     ) -> azure_core::Result<AccessToken> {
         let token: Secret = format!("TEST TOKEN {}", scopes.join(" ")).into();
-        let expires_on = OffsetDateTime::now_utc().saturating_add(
-            Duration::from_secs(60 * 5).try_into().map_err(|err| {
-                azure_core::Error::full(ErrorKind::Other, err, "failed to compute expiration")
-            })?,
-        );
+        let expires_on = OffsetDateTime::now_utc().saturating_add(Duration::minutes(5));
+
         Ok(AccessToken { token, expires_on })
     }
 }
@@ -35,7 +42,7 @@ impl TokenCredential for MockCredential {
 /// Gets a `TokenCredential` appropriate for the current environment.
 ///
 /// When running in Azure Pipelines, this will return an [`AzurePipelinesCredential`];
-/// otherwise, it will return a [`DefaultAzureCredential`].
+/// otherwise, it will return a [`DeveloperToolsCredential`].
 pub fn from_env(
     options: Option<TokenCredentialOptions>,
 ) -> azure_core::Result<Arc<dyn TokenCredential>> {
@@ -62,9 +69,13 @@ pub fn from_env(
             )? as Arc<dyn TokenCredential>);
         }
     }
-
-    Ok(
-        DefaultAzureCredential::with_options(options.unwrap_or_default())?
-            as Arc<dyn TokenCredential>,
-    )
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err(Error::message(
+            ErrorKind::Other,
+            "No local development credential for WASM.",
+        ))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    Ok(DeveloperToolsCredential::new(None)? as Arc<dyn TokenCredential>)
 }

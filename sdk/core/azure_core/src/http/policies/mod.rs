@@ -5,9 +5,11 @@
 
 mod bearer_token_policy;
 mod client_request_id;
-mod telemetry;
+mod instrumentation;
+mod user_agent;
 
 pub use bearer_token_policy::BearerTokenCredentialPolicy;
 pub use client_request_id::*;
-pub use telemetry::*;
+pub use instrumentation::*;
 pub use typespec_client_core::http::policies::*;
+pub use user_agent::*;

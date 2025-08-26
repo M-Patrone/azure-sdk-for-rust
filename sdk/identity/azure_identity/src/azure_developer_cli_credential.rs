@@ -3,20 +3,19 @@
 
 use crate::{
     env::Env,
-    process::{shell_exec, OutputProcessor},
+    process::{new_executor, shell_exec, Executor, OutputProcessor},
     validate_scope, validate_tenant_id, TokenCredentialOptions,
 };
 use azure_core::{
     credentials::{AccessToken, Secret, TokenCredential, TokenRequestOptions},
     error::{Error, ErrorKind},
     json::from_json,
-    process::{new_executor, Executor},
+    time::OffsetDateTime,
 };
 use serde::de::{self, Deserializer};
 use serde::Deserialize;
 use std::{ffi::OsString, sync::Arc};
 use time::format_description::well_known::Rfc3339;
-use time::OffsetDateTime;
 
 #[derive(Clone, Debug, Deserialize)]
 struct AzdTokenResponse {
@@ -80,7 +79,8 @@ pub struct AzureDeveloperCliCredentialOptions {
     /// Defaults to the azd environment, which is the tenant of the selected Azure subscription.
     pub tenant_id: Option<String>,
 
-    env: Option<Env>,
+    #[cfg(test)]
+    pub(crate) env: Option<Env>,
 }
 
 impl AzureDeveloperCliCredential {
@@ -92,7 +92,10 @@ impl AzureDeveloperCliCredential {
         if let Some(ref tenant_id) = options.tenant_id {
             validate_tenant_id(tenant_id)?;
         }
+        #[cfg(test)]
         let env = options.env.unwrap_or_default();
+        #[cfg(not(test))]
+        let env = Env::default();
         let executor = options.executor.unwrap_or(new_executor());
         Ok(Arc::new(Self {
             env,
@@ -102,8 +105,7 @@ impl AzureDeveloperCliCredential {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[async_trait::async_trait]
 impl TokenCredential for AzureDeveloperCliCredential {
     async fn get_token(
         &self,
@@ -116,7 +118,7 @@ impl TokenCredential for AzureDeveloperCliCredential {
                 "at least one scope required",
             ));
         }
-        let mut command = OsString::from("azd auth token -o json");
+        let mut command = OsString::from("azd auth token -o json --no-prompt");
         for scope in scopes {
             validate_scope(scope)?;
             command.push(" --scope ");
@@ -168,12 +170,15 @@ mod tests {
                     if cfg!(target_os = "windows") {
                         assert_eq!(program.to_string_lossy(), "cmd");
                         assert_eq!(args[0], "/C");
-                        assert!(args[1]
-                            .starts_with(&format!("cd {system_root} && azd auth token -o json")));
+                        assert!(args[1].starts_with(&format!(
+                            "cd {system_root} && azd auth token -o json --no-prompt"
+                        )));
                     } else {
                         assert_eq!(program, "/bin/sh");
                         assert_eq!(args[0], "-c");
-                        assert!(args[1].starts_with("cd /bin && azd auth token -o json"));
+                        assert!(
+                            args[1].starts_with("cd /bin && azd auth token -o json --no-prompt")
+                        );
                     }
                     for scope in LIVE_TEST_SCOPES {
                         assert!(args[1].contains(&format!(" --scope {scope}")));

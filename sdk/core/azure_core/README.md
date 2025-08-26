@@ -34,22 +34,27 @@ We guarantee that all client instance methods are thread-safe and independent of
 ### Additional concepts
 
 <!-- CLIENT COMMON BAR -->
+
 [Client options](#configuring-service-clients-using-clientoptions) |
 [Accessing the response](#accessing-http-response-details-using-responset) |
 [Handling Errors Results](#handling-errors-results) |
 [Consuming Service Methods Returning `Pager<T>`](#consuming-service-methods-returning-pagert)
+
 <!-- CLIENT COMMON BAR -->
 
 ## Features
 
 - `debug`: enables extra information for developers e.g., emitting all fields in `std::fmt::Debug` implementation.
-- `hmac_openssl`: configures HMAC using `openssl`.
-- `hmac_rust`: configures HMAC using pure Rust.
+- `decimal`: enables support for `rust_decimal::Decimal` type.
+- `derive`: enable derive macros e.g., `SafeDebug`.
+- `hmac_openssl`: enables HMAC signing using `openssl`. If both `hmac_openssl` and `hmac_rust` are enabled, `hmac_openssl` is used.
+- `hmac_rust`: enables HMAC signing using rust-native libraries `sha2` and `hmac`. If both `hmac_openssl` and `hmac_rust` are enabled, `hmac_openssl` is used.
 - `reqwest` (default): enables and sets `reqwest` as the default `HttpClient`. Enables `reqwest`'s `native-tls` feature.
 - `reqwest_deflate` (default): enables deflate compression for `reqwest`.
 - `reqwest_gzip` (default): enables gzip compression for `reqwest`.
-- `reqwest_rustls`: enables `reqwest`'s `rustls-tls-native-roots-no-provider` feature,
+- `reqwest_native-tls` (default): enables `reqwest`'s `native-tls` feature, which uses schannel on Windows and openssl elsewhere.
 - `tokio`: enables and sets `tokio` as the default async runtime.
+- `wasm_bindgen`: enables the async runtime for WASM.
 - `xml`: enables XML support.
 
 ## Examples
@@ -70,12 +75,12 @@ available directly on `ClientOptions`.
 
 ```rust no_run
 use azure_core::http::ClientOptions;
-use azure_identity::DefaultAzureCredential;
+use azure_identity::DeveloperToolsCredential;
 use azure_security_keyvault_secrets::{SecretClient, SecretClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let credential = DefaultAzureCredential::new()?;
+    let credential = DeveloperToolsCredential::new(None)?;
 
     let options = SecretClientOptions {
         api_version: "7.5".to_string(),
@@ -100,13 +105,13 @@ This type provides access to both the deserialized result of the service call, a
 
 ```rust no_run
 use azure_core::http::Response;
-use azure_identity::DefaultAzureCredential;
+use azure_identity::DeveloperToolsCredential;
 use azure_security_keyvault_secrets::{models::Secret, SecretClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // create a client
-    let credential = DefaultAzureCredential::new()?;
+    let credential = DeveloperToolsCredential::new(None)?;
     let client = SecretClient::new(
         "https://<your-key-vault-name>.vault.azure.net/",
         credential.clone(),
@@ -144,13 +149,13 @@ When a service call fails, the returned `Result` will contain an `Error`. The `E
 
 ```rust no_run
 use azure_core::{error::{ErrorKind, HttpError}, http::{Response, StatusCode}};
-use azure_identity::DefaultAzureCredential;
+use azure_identity::DeveloperToolsCredential;
 use azure_security_keyvault_secrets::SecretClient;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // create a client
-    let credential = DefaultAzureCredential::new()?;
+    let credential = DeveloperToolsCredential::new(None)?;
     let client = SecretClient::new(
         "https://<your-key-vault-name>.vault.azure.net/",
         credential.clone(),
@@ -178,17 +183,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Consuming service methods returning `Pager<T>`
 
-If a service call returns multiple values in pages, it would return `Result<Pager<T>>` as a result. You can iterate all items from all pages.
+If a service call returns multiple values in pages, it should return `Result<Pager<T>>` as a result. You can iterate all items from all pages.
 
 ```rust no_run
-use azure_identity::DefaultAzureCredential;
+use azure_identity::DeveloperToolsCredential;
 use azure_security_keyvault_secrets::{ResourceExt, SecretClient};
 use futures::TryStreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // create a client
-    let credential = DefaultAzureCredential::new()?;
+    let credential = DeveloperToolsCredential::new(None)?;
     let client = SecretClient::new(
         "https://<your-key-vault-name>.vault.azure.net/",
         credential.clone(),
@@ -212,14 +217,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 To instead iterate over all pages, call `into_pages()` on the returned `Pager`.
 
 ```rust no_run
-use azure_identity::DefaultAzureCredential;
+use azure_identity::DeveloperToolsCredential;
 use azure_security_keyvault_secrets::{ResourceExt, SecretClient};
 use futures::TryStreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // create a client
-    let credential = DefaultAzureCredential::new()?;
+    let credential = DeveloperToolsCredential::new(None)?;
     let client = SecretClient::new(
         "https://<your-key-vault-name>.vault.azure.net/",
         credential.clone(),
@@ -244,6 +249,275 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Consuming service methods returning `Poller<T>`
+
+If a service call may take a while to process, it should return `Result<Poller<T>>` as a result, representing a long-running operation (LRO).
+The `Poller<T>` implements `futures::Stream` so you can asynchronously iterate over each status monitor update:
+
+```rust no_run
+use azure_identity::DeveloperToolsCredential;
+use azure_security_keyvault_certificates::{
+    CertificateClient,
+    models::{CreateCertificateParameters, CertificatePolicy, X509CertificateProperties, IssuerParameters},
+};
+use futures::stream::TryStreamExt as _;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let credential = DeveloperToolsCredential::new(None)?;
+    let client = CertificateClient::new(
+        "https://your-key-vault-name.vault.azure.net/",
+        credential.clone(),
+        None,
+    )?;
+
+    // Create a self-signed certificate.
+    let policy = CertificatePolicy {
+        x509_certificate_properties: Some(X509CertificateProperties {
+            subject: Some("CN=DefaultPolicy".into()),
+            ..Default::default()
+        }),
+        issuer_parameters: Some(IssuerParameters {
+            name: Some("Self".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let body = CreateCertificateParameters {
+        certificate_policy: Some(policy),
+        ..Default::default()
+    };
+
+    // Wait for the certificate operation to complete.
+    // The Poller implements futures::Stream and automatically waits between polls.
+    let mut poller = client.begin_create_certificate("certificate-name", body.try_into()?, None)?;
+    while let Some(operation) = poller.try_next().await? {
+        let operation = operation.into_body().await?;
+        match operation.status.as_deref().unwrap_or("unknown") {
+            "inProgress" => continue,
+            "completed" => {
+                let target = operation.target.ok_or("expected target")?;
+                println!("Created certificate {}", target);
+                break;
+            },
+            status => Err(format!("operation terminated with status {status}"))?,
+        }
+    }
+
+    Ok(())
+}
+```
+
+If you just want to wait until the `Poller<T>` is complete and get the last status monitor, you can await `wait()`:
+
+```rust no_run
+use azure_identity::DeveloperToolsCredential;
+use azure_security_keyvault_certificates::{
+    CertificateClient,
+    models::{CreateCertificateParameters, CertificatePolicy, X509CertificateProperties, IssuerParameters},
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let credential = DeveloperToolsCredential::new(None)?;
+    let client = CertificateClient::new(
+        "https://your-key-vault-name.vault.azure.net/",
+        credential.clone(),
+        None,
+    )?;
+
+    // Create a self-signed certificate.
+    let policy = CertificatePolicy {
+        x509_certificate_properties: Some(X509CertificateProperties {
+            subject: Some("CN=DefaultPolicy".into()),
+            ..Default::default()
+        }),
+        issuer_parameters: Some(IssuerParameters {
+            name: Some("Self".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let body = CreateCertificateParameters {
+        certificate_policy: Some(policy),
+        ..Default::default()
+    };
+
+    // Wait for the certificate operation to complete and get the last status monitor.
+    let operation = client
+        .begin_create_certificate("certificate-name", body.try_into()?, None)?
+        .wait()
+        .await?
+        // Deserialize the CertificateOperation:
+        .into_body()
+        .await?;
+
+    if matches!(operation.status, Some(status) if status == "completed") {
+        let target = operation.target.ok_or("expected target")?;
+        println!("Created certificate {}", target);
+    }
+
+    Ok(())
+}
+```
+
+Awaiting `wait()` will only fail if the HTTP status code does not indicate successfully fetching the status monitor.
+
+### Replacing the HTTP client
+
+Though `azure_core` uses [`reqwest`] for its default HTTP client, you can replace it with either a customized `reqwest::Client` or an entirely different HTTP client.
+
+#### Reqwest
+
+We define a `reqwest` feature that provides a blanket implementation of our `HttpClient` trait for `reqwest::Client` and depends on the `reqwest` crate.
+If you just want to configure a `reqwest::Client` to use different options including a different TLS provider, optionally add a dependency on `reqwest` and enable whichever feature you want:
+
+```sh
+cargo add reqwest -F rustls-tls-native-roots
+```
+
+You can then disable default features of any of the Azure SDK crates and add a dependency on `azure_core` with the `reqwest` feature for the blanket `HttpClient` implementation:
+
+```sh
+cargo add azure_core --no-default-features -F reqwest
+```
+
+You should end up with a `Cargo.toml` that looks something like:
+
+```toml
+[dependencies]
+azure_core = { version = "1", default-features = false, features = ["reqwest"] }
+azure_identity = { version = "1", default-features = false }
+azure_security_keyvault_secrets = { version = "1", default-features = false }
+reqwest = { version = "0.12.23", default-features = false, features = [
+    "deflate",
+    "gzip",
+    "rustls-tls-native-roots",
+] }
+```
+
+In many cases with `reqwest`, importing features may be enough. See their [documentation][`reqwest`] for more information.
+If you do need to write code to customize the `reqwest::Client`, you can pass it in `ClientOptions` to our client libraries:
+
+```rust no_run
+use azure_core::http::{ClientOptions, TransportOptions};
+use azure_identity::DeveloperToolsCredential;
+use azure_security_keyvault_secrets::{SecretClient, SecretClientOptions};
+use std::sync::Arc;
+
+let http_client = Arc::new(reqwest::ClientBuilder::new().gzip(true).build().unwrap());
+
+let options = SecretClientOptions {
+    client_options: ClientOptions {
+        transport: Some(TransportOptions::new(http_client)),
+        ..Default::default()
+    },
+    ..Default::default()
+};
+
+let credential = DeveloperToolsCredential::new(None).unwrap();
+let client = SecretClient::new(
+    "https://your-key-vault-name.vault.azure.net/",
+    credential.clone(),
+    Some(options),
+)
+.unwrap();
+```
+
+#### Other
+
+If you do not want to take a dependency on [`reqwest`] at all - perhaps because you [want to use a different async runtime](#replacing-the-async-runtime) other than [`tokio`] -
+you can implement the `HttpClient` (recommended) or the `Policy` trait yourself.
+
+Similar to [customizing `reqwest` above](#reqwest), you can disable default features for Azure SDK crates. In this example where we do not want a dependency on `reqwest` at all,
+we need to import `azure_core` with no default features only to implement `HttpClient` so that your `Cargo.toml` looks something like:
+
+```toml
+[dependencies]
+azure_core = { version = "1", default-features = false }
+azure_identity = { version = "1", default-features = false }
+azure_security_keyvault_secrets = { version = "1", default-features = false }
+http = "1"
+ureq = { version = "3", default-features = false, features = [
+    "gzip",
+    "native-tls",
+] }
+```
+
+Then we need to implement `HttpClient` for another HTTP client like [`ureq`](https://docs.rs/ureq):
+
+```rust no_run
+use azure_core::{error::{ErrorKind, ResultExt as _}, http::{HttpClient, RawResponse, Request}};
+use ureq::tls::{TlsConfig, TlsProvider};
+
+#[derive(Debug)]
+struct Agent(ureq::Agent);
+
+impl Default for Agent {
+    fn default() -> Self {
+        Self(
+            ureq::Agent::config_builder()
+                .https_only(true)
+                .tls_config(
+                    TlsConfig::builder()
+                        .provider(TlsProvider::NativeTls)
+                        .build(),
+                )
+                .build()
+                .into(),
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl HttpClient for Agent {
+    async fn execute_request(&self, request: &Request) -> azure_core::Result<RawResponse> {
+        let request: ::http::request::Request<Vec<u8>> = todo!("convert our request into their request");
+        let response = self
+            .0
+            .run(request)
+            .with_context(ErrorKind::Io, || "failed to send request")?;
+
+        Ok(todo!("convert their response into our response"))
+    }
+}
+```
+
+See the [example](https://github.com/Azure/azure-sdk-for-rust/blob/main/sdk/core/azure_core/examples/core_ureq_client.rs) for a full sample implementation.
+
+After you've implemented `HttpClient`, you pass it in `ClientOptions` to our client libraries as [shown for `reqwest` above](#reqwest).
+
+### Replacing the async runtime
+
+Internally, the Azure SDK uses either the [`tokio`] async runtime (with the `tokio` feature), or it implements asynchronous functionality using functions in the `std` namespace.
+
+If your application uses a different asynchronous runtime, you can replace the asynchronous runtime used for internal functions by providing your own implementation of the `azure_core::async_runtime::AsyncRuntime` trait.
+
+You provide the implementation by calling the `set_async_runtime()` API:
+
+```rust no_run
+use azure_core::{async_runtime::{
+     set_async_runtime, AsyncRuntime, TaskFuture, SpawnedTask},
+     time::Duration};
+use std::sync::Arc;
+use futures::FutureExt;
+
+struct CustomRuntime;
+
+impl AsyncRuntime for CustomRuntime {
+    fn spawn(&self, f: TaskFuture) -> SpawnedTask {
+      unimplemented!("Custom spawn not implemented");
+    }
+    fn sleep(&self, duration: Duration) -> TaskFuture {
+      unimplemented!("Custom sleep not implemented");
+    }
+  }
+
+  set_async_runtime(Arc::new(CustomRuntime)).expect("Failed to set async runtime");
+```
+
+There can only be one async runtime set in a given process, so attempts to set the async runtime multiple times will fail.
+
 ## Troubleshooting
 
 ### Logging
@@ -251,13 +525,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 To help protected end users from accidental Personally-Identifiable Information (PII) from leaking into logs or traces, models' default implementation of `core::fmt::Debug` formats as non-exhaustive structure tuple e.g.,
 
 ```rust no_run
-use azure_identity::DefaultAzureCredential;
+use azure_identity::DeveloperToolsCredential;
 use azure_security_keyvault_secrets::{ResourceExt, SecretClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // create a client
-    let credential = DefaultAzureCredential::new()?;
+    let credential = DeveloperToolsCredential::new(None)?;
     let client = SecretClient::new(
         "https://<your-key-vault-name>.vault.azure.net/",
         credential.clone(),
@@ -288,6 +562,41 @@ Though not recommended for production, you can enable normal `core::fmt::Debug` 
 cargo add azure_core -F debug
 ```
 
+### Known issues
+
+#### Hang when invoking multiple HTTP operations using the default HTTP transport
+
+Some customers have reported hangs when using the default `reqwest` HTTP transport.
+The issue is tracked in [this GitHub issue](https://github.com/hyperium/hyper/issues/2312).
+The recommended workaround is to disable connection pooling in a custom `reqwest` transport.
+
+If you are encountering this issue, you can construct an `HttpClient` which disables HTTP connection pooling
+and set that as the transport in any `ClientOptions` used to configure your Azure SDK clients:
+
+```rust no_run
+use std::sync::Arc;
+use azure_core::http::{HttpClient, ClientOptions, TransportOptions};
+use azure_security_keyvault_secrets::SecretClientOptions;
+
+let client = Arc::new(
+    ::reqwest::ClientBuilder::new()
+        // Note that reqwest does not support `pool_max_idle_per_host` on WASM.
+        .pool_max_idle_per_host(0)
+        .build()
+        .expect("failed to build `reqwest` client"),
+);
+
+let options = SecretClientOptions {
+    client_options: ClientOptions {
+        transport: Some(TransportOptions::new(client.clone())),
+        ..Default::default()
+    },
+    ..Default::default()
+};
+```
+
+Note that implementing this workaround can result in a significant performance slowdown depending on your scenario.
+
 ## Contributing
 
 See the [CONTRIBUTING.md] for details on building, testing, and contributing to these libraries.
@@ -298,9 +607,11 @@ When you submit a pull request, a CLA-bot will automatically determine whether y
 
 This project has adopted the [Microsoft Open Source Code of Conduct]. For more information see the [Code of Conduct FAQ] or contact <opencode@microsoft.com> with any additional questions or comments.
 
-[Source code]: https://github.com/Azure/azure-sdk-for-rust/tree/main/sdk/core/azure_core/src
-[Package (crates.io)]: https://crates.io/crates/azure_core
 [API Reference Documentation]: https://docs.rs/azure_core
-[CONTRIBUTING.md]: https://github.com/Azure/azure-sdk-for-rust/blob/main/CONTRIBUTING.md
 [Code of Conduct FAQ]: https://opensource.microsoft.com/codeofconduct/faq/
+[CONTRIBUTING.md]: https://github.com/Azure/azure-sdk-for-rust/blob/main/CONTRIBUTING.md
 [guidelines]: https://azure.github.io/azure-sdk/rust_introduction.html
+[Package (crates.io)]: https://crates.io/crates/azure_core
+[`reqwest`]: https://docs.rs/reqwest
+[`tokio`]: https://docs.rs/tokio
+[Source code]: https://github.com/Azure/azure-sdk-for-rust/tree/main/sdk/core/azure_core/src

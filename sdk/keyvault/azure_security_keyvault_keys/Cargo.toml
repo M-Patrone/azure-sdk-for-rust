@@ -1,6 +1,6 @@
 [package]
 name = "azure_security_keyvault_keys"
-version = "0.4.0"
+version = "0.7.0"
 description = "Rust wrappers around Microsoft Azure REST APIs - Azure Key Vault Keys"
 readme = "README.md"
 authors.workspace = true
@@ -13,13 +13,15 @@ documentation = "https://docs.rs/azure_security_keyvault_keys"
 keywords = ["sdk", "azure", "keyvault", "security", "keys"]
 categories = ["api-bindings"]
 
+[features]
+default = ["azure_core/default"]
+
 [dependencies]
 async-trait = { workspace = true }
 azure_core = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-time = { workspace = true }
 typespec_client_core = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
@@ -30,6 +32,7 @@ azure_identity.workspace = true
 azure_security_keyvault_test = { path = "../azure_security_keyvault_test" }
 criterion.workspace = true
 rand.workspace = true
+reqwest.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 

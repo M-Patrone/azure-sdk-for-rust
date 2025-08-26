@@ -4,28 +4,33 @@
 use crate::{
     generated::clients::BlobClient as GeneratedBlobClient,
     generated::models::{
-        BlobClientDownloadResult, BlobClientGetPropertiesResult,
+        BlobClientAcquireLeaseResult, BlobClientBreakLeaseResult, BlobClientChangeLeaseResult,
+        BlobClientDownloadResult, BlobClientGetAccountInfoResult, BlobClientGetPropertiesResult,
+        BlobClientReleaseLeaseResult, BlobClientRenewLeaseResult,
         BlockBlobClientCommitBlockListResult, BlockBlobClientStageBlockResult,
         BlockBlobClientUploadResult,
     },
     models::{
-        AccessTier, BlobClientDeleteOptions, BlobClientDownloadOptions,
-        BlobClientGetPropertiesOptions, BlobClientSetMetadataOptions,
-        BlobClientSetPropertiesOptions, BlobClientSetTierOptions,
-        BlockBlobClientCommitBlockListOptions, BlockBlobClientUploadOptions, BlockList,
+        AccessTier, BlobClientAcquireLeaseOptions, BlobClientBreakLeaseOptions,
+        BlobClientChangeLeaseOptions, BlobClientDeleteOptions, BlobClientDownloadOptions,
+        BlobClientGetAccountInfoOptions, BlobClientGetPropertiesOptions, BlobClientGetTagsOptions,
+        BlobClientReleaseLeaseOptions, BlobClientRenewLeaseOptions, BlobClientSetMetadataOptions,
+        BlobClientSetPropertiesOptions, BlobClientSetTagsOptions, BlobClientSetTierOptions,
+        BlobTags, BlockBlobClientCommitBlockListOptions, BlockBlobClientUploadOptions, BlockList,
         BlockListType, BlockLookupList,
     },
     pipeline::StorageHeadersPolicy,
-    BlobClientOptions, BlockBlobClient,
+    AppendBlobClient, BlobClientOptions, BlockBlobClient, PageBlobClient,
 };
 use azure_core::{
     credentials::TokenCredential,
     http::{
         policies::{BearerTokenCredentialPolicy, Policy},
-        RequestContent, Response, Url, XmlFormat,
+        JsonFormat, NoFormat, RequestContent, Response, Url, XmlFormat,
     },
     Bytes, Result,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A client to interact with a specific Azure storage blob, although that blob may not yet exist.
@@ -59,26 +64,28 @@ impl BlobClient {
             .per_call_policies
             .push(storage_headers_policy);
 
-        let oauth_token_policy = BearerTokenCredentialPolicy::new(
-            credential.clone(),
-            ["https://storage.azure.com/.default"],
-        );
-        options
-            .client_options
-            .per_try_policies
-            .push(Arc::new(oauth_token_policy) as Arc<dyn Policy>);
-
         let client = GeneratedBlobClient::new(
             endpoint,
-            credential.clone(),
-            container_name.clone(),
-            blob_name.clone(),
+            credential,
+            container_name,
+            blob_name,
             Some(options),
         )?;
         Ok(Self {
             endpoint: endpoint.parse()?,
             client,
         })
+    }
+
+    /// Returns a new instance of AppendBlobClient.
+    ///
+    /// # Arguments
+    ///
+    pub fn append_blob_client(&self) -> AppendBlobClient {
+        AppendBlobClient {
+            endpoint: self.client.endpoint.clone(),
+            client: self.client.get_append_blob_client(),
+        }
     }
 
     /// Returns a new instance of BlockBlobClient.
@@ -89,6 +96,17 @@ impl BlobClient {
         BlockBlobClient {
             endpoint: self.client.endpoint.clone(),
             client: self.client.get_block_blob_client(),
+        }
+    }
+
+    /// Returns a new instance of PageBlobClient.
+    ///
+    /// # Arguments
+    ///
+    pub fn page_blob_client(&self) -> PageBlobClient {
+        PageBlobClient {
+            endpoint: self.client.endpoint.clone(),
+            client: self.client.get_page_blob_client(),
         }
     }
 
@@ -116,7 +134,7 @@ impl BlobClient {
     pub async fn get_properties(
         &self,
         options: Option<BlobClientGetPropertiesOptions<'_>>,
-    ) -> Result<Response<BlobClientGetPropertiesResult>> {
+    ) -> Result<Response<BlobClientGetPropertiesResult, NoFormat>> {
         self.client.get_properties(options).await
     }
 
@@ -128,7 +146,7 @@ impl BlobClient {
     pub async fn set_properties(
         &self,
         options: Option<BlobClientSetPropertiesOptions<'_>>,
-    ) -> Result<Response<()>> {
+    ) -> Result<Response<(), NoFormat>> {
         self.client.set_properties(options).await
     }
 
@@ -138,7 +156,7 @@ impl BlobClient {
     pub async fn download(
         &self,
         options: Option<BlobClientDownloadOptions<'_>>,
-    ) -> Result<Response<BlobClientDownloadResult>> {
+    ) -> Result<Response<BlobClientDownloadResult, NoFormat>> {
         self.client.download(options).await
     }
 
@@ -153,20 +171,19 @@ impl BlobClient {
     /// * `options` - Optional configuration for the request.
     pub async fn upload(
         &self,
-        data: RequestContent<Bytes>,
+        data: RequestContent<Bytes, NoFormat>,
         overwrite: bool,
         content_length: u64,
         options: Option<BlockBlobClientUploadOptions<'_>>,
-    ) -> Result<Response<BlockBlobClientUploadResult>> {
+    ) -> Result<Response<BlockBlobClientUploadResult, NoFormat>> {
         let mut options = options.unwrap_or_default();
 
         if !overwrite {
             options.if_none_match = Some(String::from("*"));
         }
 
-        let block_blob_client = self.client.get_block_blob_client();
-
-        block_blob_client
+        self.client
+            .get_block_blob_client()
             .upload(data, content_length, Some(options))
             .await
     }
@@ -181,7 +198,7 @@ impl BlobClient {
     pub async fn set_metadata(
         &self,
         options: Option<BlobClientSetMetadataOptions<'_>>,
-    ) -> Result<Response<()>> {
+    ) -> Result<Response<(), NoFormat>> {
         self.client.set_metadata(options).await
     }
 
@@ -193,7 +210,7 @@ impl BlobClient {
     pub async fn delete(
         &self,
         options: Option<BlobClientDeleteOptions<'_>>,
-    ) -> Result<Response<()>> {
+    ) -> Result<Response<(), NoFormat>> {
         self.client.delete(options).await
     }
 
@@ -208,7 +225,132 @@ impl BlobClient {
         &self,
         tier: AccessTier,
         options: Option<BlobClientSetTierOptions<'_>>,
-    ) -> Result<Response<()>> {
+    ) -> Result<Response<(), NoFormat>> {
         self.client.set_tier(tier, options).await
+    }
+
+    /// Requests a new lease on a blob. The lease lock duration can be 15 to 60 seconds, or can be infinite.
+    ///
+    /// # Arguments
+    ///
+    /// * `duration` - Specifies the duration of the lease, in seconds, or negative one (-1) for a lease that never expires. A
+    ///   non-infinite lease can be between 15 and 60 seconds.
+    /// * `options` - Optional configuration for the request.
+    pub async fn acquire_lease(
+        &self,
+        duration: i32,
+        options: Option<BlobClientAcquireLeaseOptions<'_>>,
+    ) -> Result<Response<BlobClientAcquireLeaseResult, NoFormat>> {
+        self.client.acquire_lease(duration, options).await
+    }
+
+    /// Ends a lease and ensures that another client can't acquire a new lease until the current lease
+    /// period has expired.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Optional configuration for the request.
+    pub async fn break_lease(
+        &self,
+        options: Option<BlobClientBreakLeaseOptions<'_>>,
+    ) -> Result<Response<BlobClientBreakLeaseResult, NoFormat>> {
+        self.client.break_lease(options).await
+    }
+
+    /// Changes the ID of an existing lease to the proposed lease ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `lease_id` - A lease ID for the source path. The source path must have an active lease and the
+    ///   lease ID must match.
+    /// * `proposed_lease_id` - The proposed lease ID for the blob.
+    /// * `options` - Optional configuration for the request.
+    pub async fn change_lease(
+        &self,
+        lease_id: String,
+        proposed_lease_id: String,
+        options: Option<BlobClientChangeLeaseOptions<'_>>,
+    ) -> Result<Response<BlobClientChangeLeaseResult, NoFormat>> {
+        self.client
+            .change_lease(lease_id, proposed_lease_id, options)
+            .await
+    }
+
+    /// Frees the lease so that another client can immediately acquire a lease
+    /// against the blob as soon as the release is complete.
+    ///
+    /// # Arguments
+    ///
+    /// * `lease_id` - A lease ID for the source path. The source path must have an active lease and the
+    ///   lease ID must match.
+    /// * `options` - Optional configuration for the request.
+    pub async fn release_lease(
+        &self,
+        lease_id: String,
+        options: Option<BlobClientReleaseLeaseOptions<'_>>,
+    ) -> Result<Response<BlobClientReleaseLeaseResult, NoFormat>> {
+        self.client.release_lease(lease_id, options).await
+    }
+
+    /// Renews the lease on a blob.
+    ///
+    /// # Arguments
+    ///
+    /// * `lease_id` - A lease ID for the source path. The source path must have an active lease and the
+    ///   lease ID must match.
+    /// * `options` - Optional configuration for the request.
+    pub async fn renew_lease(
+        &self,
+        lease_id: String,
+        options: Option<BlobClientRenewLeaseOptions<'_>>,
+    ) -> Result<Response<BlobClientRenewLeaseResult, NoFormat>> {
+        self.client.renew_lease(lease_id, options).await
+    }
+
+    /// Sets tags on a blob. Note that each call to this operation replaces all existing tags. To remove
+    /// all tags from the blob, call this operation with no tags specified.
+    ///
+    /// # Arguments
+    ///
+    /// * `tags` - Name-value pairs associated with the blob as tag. Tags are case-sensitive.
+    ///   The tag set may contain at most 10 tags.  Tag keys must be between 1 and 128 characters,
+    ///   and tag values must be between 0 and 256 characters.
+    ///   Valid tag key and value characters include: lowercase and uppercase letters, digits (0-9),
+    ///   space (' '), plus (+), minus (-), period (.), solidus (/), colon (:), equals (=), underscore (_)
+    /// * `options` - Optional configuration for the request.
+    pub async fn set_tags(
+        &self,
+        tags: HashMap<String, String>,
+        options: Option<BlobClientSetTagsOptions<'_>>,
+    ) -> Result<Response<(), NoFormat>> {
+        let blob_tags: BlobTags = tags.into();
+        self.client
+            .set_tags(RequestContent::try_from(blob_tags)?, options)
+            .await
+    }
+
+    /// Gets the tags on a blob.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Optional configuration for the request.
+    pub async fn get_tags(
+        &self,
+        options: Option<BlobClientGetTagsOptions<'_>>,
+    ) -> Result<Response<BlobTags, XmlFormat>> {
+        self.client.get_tags(options).await
+    }
+
+    /// Gets information related to the Storage account in which the blob resides.
+    /// This includes the `sku_name` and `account_kind`.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Optional configuration for the request.
+    pub async fn get_account_info(
+        &self,
+        options: Option<BlobClientGetAccountInfoOptions<'_>>,
+    ) -> Result<Response<BlobClientGetAccountInfoResult, NoFormat>> {
+        self.client.get_account_info(options).await
     }
 }

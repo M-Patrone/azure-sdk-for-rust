@@ -6,7 +6,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use super::{ArrowField, BlobTag, Block, ClearRange, CorsRule, FilterBlobItem, PageRange};
+use super::{ArrowField, BlobTag, Block, ContainerItem, CorsRule, FilterBlobItem};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Deserialize, Serialize)]
@@ -65,32 +65,6 @@ impl BlobsBlob {
 }
 
 #[derive(Deserialize, Serialize)]
-#[serde(rename = "ClearRange")]
-pub(crate) struct Clear_rangeClearRange {
-    #[serde(default)]
-    ClearRange: Option<Vec<ClearRange>>,
-}
-
-impl Clear_rangeClearRange {
-    pub fn unwrap<'de, D>(deserializer: D) -> Result<Option<Vec<ClearRange>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(Clear_rangeClearRange::deserialize(deserializer)?.ClearRange)
-    }
-
-    pub fn wrap<S>(to_serialize: &Option<Vec<ClearRange>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        Clear_rangeClearRange {
-            ClearRange: to_serialize.to_owned(),
-        }
-        .serialize(serializer)
-    }
-}
-
-#[derive(Deserialize, Serialize)]
 #[serde(rename = "CommittedBlocks")]
 pub(crate) struct Committed_blocksBlock {
     #[serde(default)]
@@ -117,6 +91,32 @@ impl Committed_blocksBlock {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(rename = "Containers")]
+pub(crate) struct Container_itemsContainer {
+    #[serde(default)]
+    Container: Vec<ContainerItem>,
+}
+
+impl Container_itemsContainer {
+    pub fn unwrap<'de, D>(deserializer: D) -> Result<Vec<ContainerItem>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Container_itemsContainer::deserialize(deserializer)?.Container)
+    }
+
+    pub fn wrap<S>(to_serialize: &Vec<ContainerItem>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        Container_itemsContainer {
+            Container: to_serialize.to_owned(),
+        }
+        .serialize(serializer)
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 #[serde(rename = "Cors")]
 pub(crate) struct CorsCorsRule {
     #[serde(default)]
@@ -137,32 +137,6 @@ impl CorsCorsRule {
     {
         CorsCorsRule {
             CorsRule: to_serialize.to_owned(),
-        }
-        .serialize(serializer)
-    }
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(rename = "PageRange")]
-pub(crate) struct Page_rangePageRange {
-    #[serde(default)]
-    PageRange: Option<Vec<PageRange>>,
-}
-
-impl Page_rangePageRange {
-    pub fn unwrap<'de, D>(deserializer: D) -> Result<Option<Vec<PageRange>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(Page_rangePageRange::deserialize(deserializer)?.PageRange)
-    }
-
-    pub fn wrap<S>(to_serialize: &Option<Vec<PageRange>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        Page_rangePageRange {
-            PageRange: to_serialize.to_owned(),
         }
         .serialize(serializer)
     }

@@ -7,6 +7,7 @@
 mod app_service_managed_identity_credential;
 #[cfg(not(target_arch = "wasm32"))]
 mod azure_cli_credential;
+#[cfg(not(target_arch = "wasm32"))]
 mod azure_developer_cli_credential;
 mod azure_pipelines_credential;
 mod cache;
@@ -14,27 +15,33 @@ mod client_assertion_credential;
 #[cfg(feature = "client_certificate")]
 mod client_certificate_credential;
 mod client_secret_credential;
-mod default_azure_credential;
+#[cfg(not(target_arch = "wasm32"))]
+mod developer_tools_credential;
 mod env;
 mod imds_managed_identity_credential;
 mod interactive_credential;
 mod managed_identity_credential;
 mod options;
+#[cfg(not(target_arch = "wasm32"))]
 mod process;
 mod virtual_machine_managed_identity_credential;
 mod workload_identity_credential;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use azure_cli_credential::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub use azure_developer_cli_credential::*;
 pub use azure_pipelines_credential::*;
 pub use client_assertion_credential::*;
 #[cfg(feature = "client_certificate")]
 pub use client_certificate_credential::*;
 pub use client_secret_credential::*;
-pub use default_azure_credential::*;
+#[cfg(not(target_arch = "wasm32"))]
+pub use developer_tools_credential::*;
 pub use managed_identity_credential::*;
 pub use options::TokenCredentialOptions;
+#[cfg(not(target_arch = "wasm32"))]
+pub use process::{new_executor, Executor};
 pub use workload_identity_credential::*;
 
 pub(crate) use app_service_managed_identity_credential::*;
@@ -60,8 +67,10 @@ struct EntraIdErrorResponse {
 #[serde(default)]
 struct EntraIdTokenResponse {
     token_type: String,
-    expires_in: u64,
-    ext_expires_in: u64,
+    // these are i64 to avoid conversion when calling Duration::seconds
+    // (real values are unsigned)
+    expires_in: i64,
+    ext_expires_in: i64,
     access_token: String,
 }
 
@@ -173,17 +182,20 @@ fn test_validate_tenant_id() {
 
 #[cfg(test)]
 mod tests {
+    use crate::process::Executor;
     use async_trait::async_trait;
     use azure_core::{
         error::ErrorKind,
         http::{RawResponse, Request},
-        process::Executor,
         Error, Result,
     };
     use std::{
         ffi::OsStr,
         process::Output,
-        sync::{Arc, Mutex},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
     };
 
     pub const FAKE_CLIENT_ID: &str = "fake-client";
@@ -196,6 +208,7 @@ mod tests {
 
     #[derive(Default)]
     pub struct MockExecutor {
+        call_count: AtomicUsize,
         error: Option<std::io::Error>,
         on_run: Option<RunCallback>,
         output: Mutex<Option<Output>>,
@@ -240,22 +253,32 @@ mod tests {
             Arc::new(Self {
                 on_run,
                 output: Mutex::new(Some(output)),
+                call_count: AtomicUsize::new(0),
                 ..Default::default()
             })
+        }
+
+        pub fn call_count(&self) -> usize {
+            self.call_count.load(Ordering::SeqCst)
         }
     }
 
     #[async_trait]
     impl Executor for MockExecutor {
         async fn run(&self, program: &OsStr, args: &[&OsStr]) -> std::io::Result<Output> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+
             if let Some(on_run) = &self.on_run {
                 on_run(program, args);
             }
             if let Some(err) = &self.error {
                 return Err(std::io::Error::new(err.kind(), err.to_string()));
             }
-            let mut output = self.output.lock().unwrap();
-            Ok(output.take().expect("MockExecutor output already consumed"))
+            let output = self.output.lock().unwrap();
+            match output.as_ref() {
+                Some(output) => Ok(output.clone()),
+                None => panic!("MockExecutor output not configured"),
+            }
         }
     }
 

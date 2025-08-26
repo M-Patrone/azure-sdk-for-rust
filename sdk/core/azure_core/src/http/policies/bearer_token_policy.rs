@@ -12,9 +12,8 @@ use crate::{
 use async_lock::RwLock;
 use async_trait::async_trait;
 use std::sync::Arc;
-use std::time::Duration;
-use typespec_client_core::date::OffsetDateTime;
 use typespec_client_core::http::{Context, Request};
+use typespec_client_core::time::{Duration, OffsetDateTime};
 
 /// Authentication policy for a bearer token.
 #[derive(Debug, Clone)]
@@ -114,7 +113,7 @@ impl Policy for BearerTokenCredentialPolicy {
 }
 
 fn should_refresh(expires_on: &OffsetDateTime) -> bool {
-    *expires_on <= OffsetDateTime::now_utc() + Duration::from_secs(300)
+    *expires_on <= OffsetDateTime::now_utc() + Duration::minutes(5)
 }
 
 #[cfg(test)]
@@ -127,6 +126,7 @@ mod tests {
             policies::Policy,
             Request, StatusCode,
         },
+        time::OffsetDateTime,
         Bytes, Result,
     };
     use async_trait::async_trait;
@@ -136,10 +136,9 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
-    use std::time::Duration;
-    use time::OffsetDateTime;
-    use typespec_client_core::http::{
-        policies::TransportPolicy, Method, RawResponse, TransportOptions,
+    use typespec_client_core::{
+        http::{policies::TransportPolicy, Method, RawResponse, TransportOptions},
+        time::Duration,
     };
 
     #[derive(Debug, Clone)]
@@ -199,7 +198,11 @@ mod tests {
         let mut req = Request::new("https://localhost".parse().unwrap(), Method::Get);
 
         let err = policy
-            .send(&Context::default(), &mut req, &[transport.clone()])
+            .send(
+                &Context::default(),
+                &mut req,
+                std::slice::from_ref(&(transport.clone() as Arc<dyn Policy>)),
+            )
             .await
             .expect_err("request should fail");
 
@@ -237,7 +240,11 @@ mod tests {
                 let ctx = Context::default();
                 let mut req = Request::new("https://localhost".parse().unwrap(), Method::Get);
                 policy
-                    .send(&ctx, &mut req, &[transport.clone()])
+                    .send(
+                        &ctx,
+                        &mut req,
+                        std::slice::from_ref(&(transport.clone() as Arc<dyn Policy>)),
+                    )
                     .await
                     .expect("successful request");
             });
@@ -245,7 +252,7 @@ mod tests {
         }
 
         for handle in handles {
-            tokio::time::timeout(Duration::from_secs(2), handle)
+            tokio::time::timeout(Duration::seconds(2).try_into().unwrap(), handle)
                 .await
                 .expect("task timed out after 2 seconds")
                 .expect("completed task");
@@ -256,7 +263,7 @@ mod tests {
     async fn caches_token() {
         run_test(&[AccessToken {
             token: Secret::new("fake".to_string()),
-            expires_on: OffsetDateTime::now_utc() + Duration::from_secs(3600),
+            expires_on: OffsetDateTime::now_utc() + Duration::seconds(3600),
         }])
         .await;
     }
@@ -266,11 +273,11 @@ mod tests {
         run_test(&[
             AccessToken {
                 token: Secret::new("1".to_string()),
-                expires_on: OffsetDateTime::now_utc() - Duration::from_secs(1),
+                expires_on: OffsetDateTime::now_utc() - Duration::seconds(1),
             },
             AccessToken {
                 token: Secret::new("2".to_string()),
-                expires_on: OffsetDateTime::now_utc() + Duration::from_secs(3600),
+                expires_on: OffsetDateTime::now_utc() + Duration::seconds(3600),
             },
         ])
         .await;

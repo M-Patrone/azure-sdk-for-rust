@@ -3,8 +3,8 @@
 
 //! This sample demonstrates how to send events to all partitions using a batch sender.
 
-use azure_core::Uuid;
-use azure_identity::DefaultAzureCredential;
+use azure_core::{time::Duration, Uuid};
+use azure_identity::DeveloperToolsCredential;
 use azure_messaging_eventhubs::{
     models::EventData, EventDataBatchOptions, ProducerClient, RetryOptions,
 };
@@ -14,11 +14,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set up the Event Hubs client
     let eventhub_namespace = std::env::var("EVENTHUBS_HOST")?;
     let eventhub_name = std::env::var("EVENTHUB_NAME")?;
-    let credential = DefaultAzureCredential::new()?;
+    let credential = DeveloperToolsCredential::new(None)?;
 
     let client = ProducerClient::builder()
         .with_retry_options(RetryOptions {
-            initial_delay: std::time::Duration::from_millis(100),
+            initial_delay: Duration::milliseconds(100),
             ..Default::default()
         })
         .open(
@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("EventData message sent to partition: {}", partition_id);
         }
 
-        client.send_batch(&batch, None).await?;
+        client.send_batch(batch, None).await?;
     }
 
     Ok(())

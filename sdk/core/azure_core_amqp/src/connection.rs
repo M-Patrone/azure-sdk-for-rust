@@ -2,9 +2,8 @@
 // Licensed under the MIT license.
 
 use super::value::{AmqpOrderedMap, AmqpSymbol, AmqpValue};
-use azure_core::{error::Result, http::Url};
+use azure_core::{error::Result, http::Url, time::Duration};
 use std::fmt::Debug;
-use time::Duration;
 
 #[cfg(all(feature = "fe2o3_amqp", not(target_arch = "wasm32")))]
 type ConnectionImplementation = super::fe2o3::connection::Fe2o3AmqpConnection;
@@ -123,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_amqp_connection_options_with_idle_timeout() {
-        let idle_timeout = time::Duration::seconds(60);
+        let idle_timeout = Duration::minutes(1);
         let connection_options = AmqpConnectionOptions {
             idle_timeout: Some(idle_timeout),
             ..Default::default()
@@ -219,7 +218,7 @@ mod tests {
         let connection_options = AmqpConnectionOptions {
             max_frame_size: Some(1024),
             channel_max: Some(16),
-            idle_timeout: Some(time::Duration::seconds(60)),
+            idle_timeout: Some(Duration::minutes(1)),
             outgoing_locales: Some(vec!["en-US".to_string()]),
             incoming_locales: Some(vec!["en-US".to_string()]),
             offered_capabilities: Some(vec!["capability".into()]),
@@ -236,10 +235,7 @@ mod tests {
 
         assert_eq!(connection_options.max_frame_size, Some(1024));
         assert_eq!(connection_options.channel_max, Some(16));
-        assert_eq!(
-            connection_options.idle_timeout,
-            Some(time::Duration::seconds(60))
-        );
+        assert_eq!(connection_options.idle_timeout, Some(Duration::minutes(1)));
         assert_eq!(
             connection_options.outgoing_locales,
             Some(vec!["en-US".to_string()])
@@ -268,6 +264,9 @@ mod tests {
         );
     }
 
+    // On macOS, there is a periodic issue where loopback TCP connections fail.
+    // Disable these tests on macOS.
+    #[cfg(not(target_os = "macos"))]
     #[tokio::test]
     async fn amqp_connection_open() {
         let address = std::env::var("TEST_BROKER_ADDRESS");
@@ -298,6 +297,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[tokio::test]
     async fn amqp_connection_close() {
         let address = std::env::var("TEST_BROKER_ADDRESS");
@@ -314,6 +314,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[tokio::test]
     async fn amqp_connection_close_with_error() {
         tracing_subscriber::fmt::init();

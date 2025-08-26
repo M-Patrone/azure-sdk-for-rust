@@ -14,11 +14,10 @@ use azure_core::{
         headers::{self, content_type},
         Method, Request, Url,
     },
+    time::{Duration, OffsetDateTime},
     Error,
 };
-use std::time::Duration;
 use std::{str, sync::Arc};
-use time::OffsetDateTime;
 use url::form_urlencoded;
 
 const CLIENT_SECRET_CREDENTIAL: &str = "ClientSecretCredential";
@@ -95,7 +94,7 @@ impl ClientSecretCredential {
                     deserialize(CLIENT_SECRET_CREDENTIAL, res).await?;
                 Ok(AccessToken::new(
                     token_response.access_token,
-                    OffsetDateTime::now_utc() + Duration::from_secs(token_response.expires_in),
+                    OffsetDateTime::now_utc() + Duration::seconds(token_response.expires_in),
                 ))
             }
             _ => {
@@ -148,7 +147,7 @@ mod tests {
     fn is_valid_request(authority_host: &str, tenant_id: &str) -> impl Fn(&Request) -> Result<()> {
         let expected_url = format!("{}{}/oauth2/v2.0/token", authority_host, tenant_id);
         move |req: &Request| {
-            assert_eq!(&Method::Post, req.method());
+            assert_eq!(Method::Post, req.method());
             assert_eq!(expected_url, req.url().to_string());
             assert_eq!(
                 req.headers().get_str(&headers::CONTENT_TYPE).unwrap(),

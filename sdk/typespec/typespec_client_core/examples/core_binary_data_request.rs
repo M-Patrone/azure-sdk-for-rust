@@ -1,10 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+mod common;
+
+use common::fs::FileStreamBuilder;
 use tokio::fs;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
-use typespec_client_core::{fs::FileStreamBuilder, http::RequestContent};
+use typespec_client_core::http::RequestContent;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,11 +42,12 @@ mod client {
     use typespec_client_core::{
         http::{headers::Headers, Body, RawResponse, RequestContent, Response, StatusCode},
         stream::BytesStream,
+        Bytes,
     };
 
     #[tracing::instrument(skip(body))]
     pub async fn put_binary_data(
-        body: RequestContent<()>,
+        body: RequestContent<Bytes>,
     ) -> typespec_client_core::Result<Response<()>> {
         let body: Body = body.into();
 
