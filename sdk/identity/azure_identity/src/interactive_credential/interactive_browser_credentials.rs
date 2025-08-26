@@ -7,14 +7,13 @@ use azure_core::{
         headers::{self, content_type},
         new_http_client, HttpClient, Url,
     },
-    process::Executor,
 };
-
 use azure_core::{
     error::ErrorKind,
     http::{Method, Request},
     time::{Duration, OffsetDateTime},
 };
+use azure_identity::process::Executor;
 use time::OffsetDateTime;
 use tracing::debug;
 use url::form_urlencoded;
