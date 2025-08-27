@@ -23,7 +23,7 @@ pub struct HybridAuthContext {
 #[allow(dead_code)]
 #[cfg(target_os = "linux")]
 pub async fn open_url(url: &str) -> Option<HybridAuthContext> {
-    use azure_core::process::{new_executor, Executor};
+    use crate::process::{new_executor, Executor};
     use std::{ffi::OsStr, sync::Arc};
 
     info!("only authorize url: {}", url.clone());
@@ -60,7 +60,7 @@ pub async fn open_url(url: &str) -> Option<HybridAuthContext> {
 #[allow(dead_code)]
 #[cfg(target_os = "linux")]
 async fn is_command_available(cmd: &str) -> bool {
-    use azure_core::process::{new_executor, Executor};
+    use crate::process::{new_executor, Executor};
     use std::{ffi::OsStr, sync::Arc};
 
     let executor: Arc<dyn Executor> = new_executor();

@@ -13,8 +13,7 @@ use azure_core::{
     http::{Method, Request},
     time::{Duration, OffsetDateTime},
 };
-use azure_identity::process::Executor;
-use time::OffsetDateTime;
+use crate::process::Executor;
 use tracing::debug;
 use url::form_urlencoded;
 
@@ -87,7 +86,7 @@ impl InteractiveBrowserCredential {
                 redirect_url,
                 //TODO  implement Default trait
                 local_http_client: new_http_client(),
-                executor: azure_core::process::new_executor(),
+                executor: crate::process::new_executor(),
             },
         })
     }
