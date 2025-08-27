@@ -1,5 +1,6 @@
 use std::{str::FromStr, sync::Arc, u16};
 
+use crate::process::Executor;
 use azure_core::{
     credentials::AccessToken,
     error::http_response_from_body,
@@ -13,7 +14,6 @@ use azure_core::{
     http::{Method, Request},
     time::{Duration, OffsetDateTime},
 };
-use crate::process::Executor;
 use tracing::debug;
 use url::form_urlencoded;
 
@@ -99,7 +99,13 @@ impl InteractiveBrowserCredential {
                 let option_hybrid_auth_context = open_url(&url.to_string())
                     .await
                     .expect("Could not get auth context");
-                let a = self.authorize(scopes);
+
+                let access_token = get_access_token(
+                    scopes.unwrap(),
+                    self.options.clone(),
+                    &option_hybrid_auth_context.auth_code,
+                )
+                .await;
             }
             err => {
                 debug!("Error on authorize");
