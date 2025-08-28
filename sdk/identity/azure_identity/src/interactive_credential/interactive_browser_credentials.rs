@@ -8,6 +8,7 @@ use azure_core::{
         headers::{self, content_type},
         new_http_client, HttpClient, Url,
     },
+    Error,
 };
 use azure_core::{
     error::ErrorKind,
@@ -91,7 +92,7 @@ impl InteractiveBrowserCredential {
         })
     }
 
-    async fn get_auth_token(&self, scopes: Option<&[&str]>) {
+    async fn get_auth_token(&self, scopes: Option<&[&str]>) -> azure_core::Result<AccessToken> {
         let url = self.authorize(scopes);
         match url {
             Ok(url) => {
@@ -106,9 +107,12 @@ impl InteractiveBrowserCredential {
                     &option_hybrid_auth_context.auth_code,
                 )
                 .await;
+
+                access_token
             }
-            err => {
+            Err(e) => {
                 debug!("Error on authorize");
+                Err(Error::new(ErrorKind::Other, e))
             }
         }
     }
