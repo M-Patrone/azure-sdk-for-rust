@@ -10,14 +10,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         std::env::var("AZURE_SUBSCRIPTION_ID").expect("AZURE_SUBSCRIPTION_ID required");
 
     let test_tenant_id = std::env::var("AZURE_TENANT_ID").expect("AZURE_TENANT_ID required");
-    println!("test starter");
     let _ = run_app_inter(test_subscription_id, test_tenant_id).await?;
     Ok(())
 }
 
 async fn run_app_inter(subscription_id: String, tenant_id: String) -> Result<(), Box<dyn Error>> {
-    info!("ahdfadlkjfdakldjfa");
-
     let interactive_credentials =
         InteractiveBrowserCredential::new(None, Some(tenant_id), None).unwrap();
 

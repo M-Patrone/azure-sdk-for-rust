@@ -20,8 +20,6 @@ use url::form_urlencoded;
 
 use crate::{interactive_credential::internal_server::open_url, EntraIdTokenResponse};
 
-use super::internal_server::HybridAuthContext;
-
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
 const DEFAULT_SCOPE_ARR: [&str; 3] = ["openid", "offline_access", "profile"];
@@ -49,7 +47,6 @@ pub struct InteractiveBrowserCredentialOptions {
     /// Redirect URI where the authentication response is sent.
     pub redirect_url: Url,
 
-    pub(crate) executor: Arc<dyn Executor>,
     local_http_client: Arc<dyn HttpClient>,
 }
 
@@ -87,7 +84,6 @@ impl InteractiveBrowserCredential {
                 redirect_url,
                 //TODO  implement Default trait
                 local_http_client: new_http_client(),
-                executor: crate::process::new_executor(),
             },
         })
     }
@@ -101,18 +97,16 @@ impl InteractiveBrowserCredential {
         match url {
             Ok(url) => {
                 debug!("url to open: {}", url.to_string());
-                let option_hybrid_auth_context = open_url(&url.to_string())
+                let option_hybrid_auth_context = open_url(url.as_ref())
                     .await
                     .expect("Could not get auth context");
 
-                let access_token = req_access_token(
-                    &(scopes.or(Some(&DEFAULT_SCOPE_ARR)).unwrap()),
+                req_access_token(
+                    scopes.unwrap_or(&DEFAULT_SCOPE_ARR),
                     self.options.clone(),
                     &option_hybrid_auth_context.auth_code,
                 )
-                .await;
-
-                access_token
+                .await
             }
             Err(e) => {
                 debug!("Error on authorize");
@@ -127,7 +121,6 @@ impl InteractiveBrowserCredential {
             client_id,
             tenant_id,
             redirect_url,
-            executor,
             ..
         } = self.options.clone();
         let auth_url: Url = Url::parse(&format!(
@@ -143,7 +136,7 @@ impl InteractiveBrowserCredential {
             .append_pair("client_info", "1")
             .append_pair("response_mode", "form_post")
             .append_pair("response_type", "code")
-            .append_pair("redirect_uri", &redirect_url.to_string())
+            .append_pair("redirect_uri", redirect_url.as_ref())
             .finish();
         debug!("Method authorize() after variable init");
 
