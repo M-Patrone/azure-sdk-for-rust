@@ -34,8 +34,8 @@ pub async fn open_url(url: &str) -> Option<HybridAuthContext> {
         let args: &[&OsStr] = &[OsStr::new(url)];
 
         //TODO: remove debug to manually open url
-        //let spawned = executor.run(command_ostr, args).await;
-        let spawned: Result<Output, &str> = Err("DEBUG ERRROR");
+        let spawned = executor.run(command_ostr, args).await;
+        // let spawned: Result<Output, &str> = Err("DEBUG ERRROR");
         match spawned {
             Ok(spawned_ok) => {
                 //Could not open the browser

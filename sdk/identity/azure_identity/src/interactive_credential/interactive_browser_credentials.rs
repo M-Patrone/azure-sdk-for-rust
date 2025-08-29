@@ -15,7 +15,7 @@ use azure_core::{
     http::{Method, Request},
     time::{Duration, OffsetDateTime},
 };
-use tracing::debug;
+use tracing::{debug, info};
 use url::form_urlencoded;
 
 use crate::{interactive_credential::internal_server::open_url, EntraIdTokenResponse};
@@ -92,7 +92,11 @@ impl InteractiveBrowserCredential {
         })
     }
 
-    async fn get_auth_token(&self, scopes: Option<&[&str]>) -> azure_core::Result<AccessToken> {
+    pub async fn get_access_token(
+        &self,
+        scopes: Option<&[&str]>,
+    ) -> azure_core::Result<AccessToken> {
+        info!("starting method");
         let url = self.authorize(scopes);
         match url {
             Ok(url) => {
@@ -101,8 +105,8 @@ impl InteractiveBrowserCredential {
                     .await
                     .expect("Could not get auth context");
 
-                let access_token = get_access_token(
-                    scopes.unwrap(),
+                let access_token = req_access_token(
+                    &(scopes.or(Some(&DEFAULT_SCOPE_ARR)).unwrap()),
                     self.options.clone(),
                     &option_hybrid_auth_context.auth_code,
                 )
@@ -151,7 +155,7 @@ impl InteractiveBrowserCredential {
     //add https://github.com/Azure/azure-sdk-for-rust/blob/7f04e44c27aa83627013b6feee71823040492898/sdk/identity/azure_identity/src/client_certificate_credential.rs#L12
 }
 
-async fn get_access_token(
+async fn req_access_token(
     scopes: &[&str],
     options: InteractiveBrowserCredentialOptions,
     auth_code: &str,
@@ -177,11 +181,16 @@ async fn get_access_token(
             .append_pair("client_id", &options.client_id)
             .append_pair("scope", &scopes.join(" "))
             .append_pair("code", auth_code)
-            .append_pair("grant_type", "authorize_code");
+            .append_pair(
+                "redirect_uri",
+                &format!("http://localhost:{}", LOCAL_SERVER_PORT),
+            )
+            .append_pair("grant_type", "authorization_code");
 
         encoded.finish()
     };
 
+    info!("token request: {:#?}", &encoded);
     req.set_body(encoded);
     let rsp = options.local_http_client.execute_request(&req).await?;
     let rsp_status = rsp.status();
@@ -200,9 +209,6 @@ async fn get_access_token(
 
 #[cfg(test)]
 mod tests {
-    use crate::interactive_credential::azure_code_credential::authorize;
-    use crate::interactive_credential::internal_server::open_url;
-
     use super::*;
     use tracing::debug;
     use tracing::Level;
@@ -225,6 +231,8 @@ mod tests {
         let credential_options =
             InteractiveBrowserCredential::new(None, None, None).expect("Error on setting ");
 
-        let res_body = authorize(credential_options, None).await;
+        let response = credential_options.get_access_token(None).await;
+
+        info!("after request {:#?}", response);
     }
 }
