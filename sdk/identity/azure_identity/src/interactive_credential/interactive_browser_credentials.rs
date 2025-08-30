@@ -1,6 +1,3 @@
-use std::{str::FromStr, sync::Arc, u16};
-
-use crate::process::Executor;
 use azure_core::{
     credentials::AccessToken,
     error::http_response_from_body,
@@ -15,6 +12,7 @@ use azure_core::{
     http::{Method, Request},
     time::{Duration, OffsetDateTime},
 };
+use std::{str::FromStr, sync::Arc, u16};
 use tracing::{debug, info};
 use url::form_urlencoded;
 
@@ -23,7 +21,7 @@ use crate::{interactive_credential::internal_server::open_url, EntraIdTokenRespo
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
 const DEFAULT_SCOPE_ARR: [&str; 3] = ["openid", "offline_access", "profile"];
-const AUTORIZE_URL: &str = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize";
+const AUTH_URL: &str = "https://login.microsoftonline.com";
 
 /// Default client ID for interactive browser authentication.
 #[allow(dead_code)]
@@ -123,10 +121,9 @@ impl InteractiveBrowserCredential {
             redirect_url,
             ..
         } = self.options.clone();
-        let auth_url: Url = Url::parse(&format!(
-            "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize?",
-        ))
-        .expect("Invalid authorization endpoint URL");
+        let auth_url: Url =
+            Url::parse(&format!("{}/{}/oauth2/v2.0/authorize", AUTH_URL, tenant_id))
+                .expect("Invalid authorization endpoint URL");
 
         let scopes = scopes.unwrap_or(&DEFAULT_SCOPE_ARR);
 
@@ -142,10 +139,6 @@ impl InteractiveBrowserCredential {
 
         Url::from_str(&format!("{}{}", &auth_url, &body_authorize.to_string()))
     }
-
-    //https://learn.microsoft.com/en-us/graph/auth-v2-user?tabs=http
-
-    //add https://github.com/Azure/azure-sdk-for-rust/blob/7f04e44c27aa83627013b6feee71823040492898/sdk/identity/azure_identity/src/client_certificate_credential.rs#L12
 }
 
 async fn req_access_token(
@@ -155,8 +148,8 @@ async fn req_access_token(
 ) -> azure_core::Result<AccessToken> {
     let mut req = Request::new(
         Url::parse(&format!(
-            "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-            &options.tenant_id
+            "{}/{}/oauth2/v2.0/token",
+            AUTH_URL, &options.tenant_id
         ))
         .unwrap(),
         Method::Post,

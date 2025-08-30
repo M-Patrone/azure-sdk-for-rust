@@ -1,10 +1,9 @@
 use base64::engine::general_purpose;
 use base64::Engine;
-use std::process::Output;
 use std::time::Duration;
 use tracing::{error, info};
 
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 ///The port where the local server is listening on the auth_code
 #[allow(dead_code)]
@@ -13,10 +12,6 @@ pub const LOCAL_SERVER_PORT: u16 = 53298;
 #[derive(Debug)]
 pub struct HybridAuthContext {
     pub auth_code: String,
-    pub raw_id_token: String,
-    pub oid_sub: String,
-    pub tid: String,
-    pub nonce: String,
 }
 /// Opens the given URL in the default system browser and starts a local web server
 /// to receive the authorization code.
@@ -35,16 +30,14 @@ pub async fn open_url(url: &str) -> Option<HybridAuthContext> {
 
         //TODO: remove debug to manually open url
         let spawned = executor.run(command_ostr, args).await;
-        // let spawned: Result<Output, &str> = Err("DEBUG ERRROR");
         match spawned {
             Ok(spawned_ok) => {
                 //Could not open the browser
                 if spawned_ok.stdout.len() == 0 && spawned_ok.stderr.len() > 0 {
-                    info!("Open the following link manually in your browser: {url}");
+                    println!("Open the following link manually in your browser: {url}");
                 }
             }
             Err(e) => {
-                info!("Open the following link manually in your browser: {url}");
                 error!("Failed to start browser command: {e}");
             }
         }
@@ -52,9 +45,58 @@ pub async fn open_url(url: &str) -> Option<HybridAuthContext> {
         return handle_browser_command();
     }
 
-    info!("Open the following link manually in your browser: {url}");
-    None
+    println!("Open the following link manually in your browser: {url}");
+    handle_browser_command()
 }
+
+/// Opens the given URL in the default system browser and starts a local web server
+/// to receive the authorization code.
+#[allow(dead_code)]
+#[cfg(target_os = "windows")]
+pub async fn open_url(url: &str) -> Option<String> {
+    use crate::process::{new_executor, Executor};
+    let command_ostr = OsStr::new("cmd");
+    let args: &[&OsStr] = &[OsStr::new(url)];
+    let spawned = executor.run(command_ostr, args).await;
+    match spawned {
+        Ok(spawned_ok) => {
+            //Could not open the browser
+            if spawned_ok.stdout.len() == 0 && spawned_ok.stderr.len() > 0 {
+                println!("Open the following link manually in your browser: {url}");
+            }
+        }
+        Err(e) => {
+            println!("Open the following link manually in your browser: {url}");
+            error!("Failed to start browser command: {e}");
+        }
+    }
+    handle_browser_command()
+}
+
+/// Opens the given URL in the default system browser and starts a local web server
+/// to receive the authorization code.
+#[allow(dead_code)]
+#[cfg(target_os = "macos")]
+pub async fn open_url(url: &str) -> Option<String> {
+    use crate::process::{new_executor, Executor};
+    let command_ostr = OsStr::new("open");
+    let args: &[&OsStr] = &[OsStr::new(url)];
+    let spawned = executor.run(command_ostr, args).await;
+    match spawned {
+        Ok(spawned_ok) => {
+            //Could not open the browser
+            if spawned_ok.stdout.len() == 0 && spawned_ok.stderr.len() > 0 {
+                println!("Open the following link manually in your browser: {url}");
+            }
+        }
+        Err(e) => {
+            println!("Open the following link manually in your browser: {url}");
+            error!("Failed to start browser command: {e}");
+        }
+    }
+    handle_browser_command()
+}
+
 /// Method to check if the command to open the link in a browser is available on the computer
 /// exists.
 #[allow(dead_code)]
@@ -190,10 +232,6 @@ fn handle_client(mut stream: TcpStream) -> Option<HybridAuthContext> {
 
     Some(HybridAuthContext {
         auth_code: code.unwrap_or(String::from("NO VALUE")),
-        raw_id_token: String::from(""),
-        nonce: String::from(""),
-        oid_sub: String::from(""),
-        tid: String::from(""),
     })
 }
 ///method to decode the `id_token`
