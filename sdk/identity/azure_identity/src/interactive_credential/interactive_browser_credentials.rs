@@ -16,7 +16,7 @@ use std::{str::FromStr, sync::Arc, u16};
 use tracing::{debug, info};
 use url::form_urlencoded;
 
-use crate::{interactive_credential::internal_server::open_url, EntraIdTokenResponse};
+use crate::{cache, interactive_credential::internal_server::open_url, EntraIdTokenResponse, TokenCache};
 
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
@@ -36,7 +36,7 @@ const LOCAL_SERVER_PORT: u16 = 53298;
 ///
 /// This struct allows customization of the interactive browser authentication flow,
 /// including the client ID, tenant ID, and redirect URL used during the authentication process.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct InteractiveBrowserCredentialOptions {
     /// Client ID of the application.
     pub client_id: String,
@@ -57,6 +57,7 @@ impl InteractiveBrowserCredentialOptions {
 #[derive(Debug)]
 pub struct InteractiveBrowserCredential {
     pub options: InteractiveBrowserCredentialOptions,
+    cache: TokenCache,
 }
 
 impl InteractiveBrowserCredential {
@@ -80,9 +81,9 @@ impl InteractiveBrowserCredential {
                 client_id,
                 tenant_id,
                 redirect_url,
-                //TODO  implement Default trait
                 local_http_client: new_http_client(),
             },
+            cache: TokenCache::new()
         })
     }
 
@@ -91,6 +92,9 @@ impl InteractiveBrowserCredential {
         scopes: Option<&[&str]>,
     ) -> azure_core::Result<AccessToken> {
         info!("starting method");
+
+        self.cac
+
         let url = self.authorize(scopes);
         match url {
             Ok(url) => {
@@ -127,7 +131,7 @@ impl InteractiveBrowserCredential {
 
         let scopes = scopes.unwrap_or(&DEFAULT_SCOPE_ARR);
 
-        let mut body_authorize = form_urlencoded::Serializer::new(String::new())
+        let body_authorize = form_urlencoded::Serializer::new(String::new())
             .append_pair("client_id", &client_id)
             .append_pair("scope", &scopes.join(" "))
             .append_pair("client_info", "1")
