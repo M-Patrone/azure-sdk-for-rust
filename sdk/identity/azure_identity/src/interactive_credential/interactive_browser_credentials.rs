@@ -12,11 +12,13 @@ use azure_core::{
     http::{Method, Request},
     time::{Duration, OffsetDateTime},
 };
-use std::{str::FromStr, sync::Arc, u16};
+use std::{collections::HashSet, str::FromStr, sync::Arc, u16};
 use tracing::{debug, info};
 use url::form_urlencoded;
 
-use crate::{cache, interactive_credential::internal_server::open_url, EntraIdTokenResponse, TokenCache};
+use crate::{cache, interactive_credential::internal_server::open_url, EntraIdTokenResponse};
+
+use super::interactive_credentials_cache::IdTokenCache;
 
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
@@ -57,7 +59,7 @@ impl InteractiveBrowserCredentialOptions {
 #[derive(Debug)]
 pub struct InteractiveBrowserCredential {
     pub options: InteractiveBrowserCredentialOptions,
-    cache: TokenCache,
+    cache: IdTokenCache,
 }
 
 impl InteractiveBrowserCredential {
@@ -83,7 +85,7 @@ impl InteractiveBrowserCredential {
                 redirect_url,
                 local_http_client: new_http_client(),
             },
-            cache: TokenCache::new()
+            cache: TokenCache::new(),
         })
     }
 
@@ -93,9 +95,12 @@ impl InteractiveBrowserCredential {
     ) -> azure_core::Result<AccessToken> {
         info!("starting method");
 
-        self.cac
+        let verified_scopes: &[&str] = match (scopes) {
+            Some(scopes_ok) => &(ensure_default_scopes(scopes_ok)),
+            None => &DEFAULT_SCOPE_ARR,
+        };
 
-        let url = self.authorize(scopes);
+        let url = self.authorize(verified_scopes);
         match url {
             Ok(url) => {
                 debug!("url to open: {}", url.to_string());
@@ -118,7 +123,7 @@ impl InteractiveBrowserCredential {
     }
 }
 impl InteractiveBrowserCredential {
-    fn authorize(&self, scopes: Option<&[&str]>) -> Result<Url, url::ParseError> {
+    fn authorize(&self, scopes: &[&str]) -> Result<Url, url::ParseError> {
         let InteractiveBrowserCredentialOptions {
             client_id,
             tenant_id,
@@ -128,8 +133,6 @@ impl InteractiveBrowserCredential {
         let auth_url: Url =
             Url::parse(&format!("{}/{}/oauth2/v2.0/authorize", AUTH_URL, tenant_id))
                 .expect("Invalid authorization endpoint URL");
-
-        let scopes = scopes.unwrap_or(&DEFAULT_SCOPE_ARR);
 
         let body_authorize = form_urlencoded::Serializer::new(String::new())
             .append_pair("client_id", &client_id)
@@ -175,7 +178,9 @@ async fn req_access_token(
                 "redirect_uri",
                 &format!("http://localhost:{}", LOCAL_SERVER_PORT),
             )
-            .append_pair("grant_type", "authorization_code");
+            .append_pair("grant_type", "authorization_code")
+            //get the id token
+            .append_pair("client_info", "1");
 
         encoded.finish()
     };
@@ -195,6 +200,19 @@ async fn req_access_token(
         response.access_token,
         OffsetDateTime::now_utc() + Duration::seconds(response.expires_in),
     ))
+}
+///check if there at least the default scopes included
+fn ensure_default_scopes<'a>(scopes: &'a [&'a str]) -> Vec<&'a str> {
+    let mut scope_set: HashSet<&'a str> = scopes.iter().copied().collect();
+    let mut result = scopes.to_vec();
+
+    for default_scope in DEFAULT_SCOPE_ARR.iter() {
+        if scope_set.insert(default_scope) {
+            result.push(default_scope);
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]
