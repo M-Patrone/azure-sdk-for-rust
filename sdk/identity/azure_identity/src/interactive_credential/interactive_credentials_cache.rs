@@ -49,7 +49,7 @@ impl Hash for IdTokenCache {
 impl Eq for IdTokenCache {}
 
 impl IdTokenCache {
-    fn new(oid: String, tid: String, scopes: Vec<String>) -> Self {
+    pub fn new(oid: String, tid: String, scopes: Vec<String>) -> Self {
         IdTokenCache { oid, tid, scopes }
     }
 }
