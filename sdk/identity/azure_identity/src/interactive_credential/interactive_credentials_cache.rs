@@ -69,7 +69,7 @@ impl TokenCache {
         Ok(())
     }
 
-    pub(crate) async fn get_token(
+    pub async fn get_token(
         &self,
         scopes: &[&str],
         oid: String,

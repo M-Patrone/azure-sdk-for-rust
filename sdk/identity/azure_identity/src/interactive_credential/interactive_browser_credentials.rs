@@ -1,5 +1,5 @@
 use azure_core::{
-    credentials::AccessToken,
+    credentials::{AccessToken, TokenCredential, TokenRequestOptions},
     error::http_response_from_body,
     http::{
         headers::{self, content_type},
@@ -16,7 +16,10 @@ use std::{collections::HashSet, str::FromStr, sync::Arc, u16};
 use tracing::{debug, info};
 use url::form_urlencoded;
 
-use crate::{cache, interactive_credential::internal_server::open_url, EntraIdTokenResponse};
+use crate::{
+    cache, interactive_credential::internal_server::open_url, EntraIdTokenResponse,
+    TokenCredentialOptions,
+};
 
 use super::interactive_credentials_cache::IdTokenCache;
 
@@ -38,7 +41,7 @@ const LOCAL_SERVER_PORT: u16 = 53298;
 ///
 /// This struct allows customization of the interactive browser authentication flow,
 /// including the client ID, tenant ID, and redirect URL used during the authentication process.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InteractiveBrowserCredentialOptions<'a> {
     /// Client ID of the application.
     pub client_id: String,
@@ -46,7 +49,7 @@ pub struct InteractiveBrowserCredentialOptions<'a> {
     pub tenant_id: String,
     /// Redirect URI where the authentication response is sent.
     pub redirect_url: Url,
-    pub scopes: &'a [&'a str],
+    pub scopes: Vec<&'a str>,
 
     local_http_client: Arc<dyn HttpClient>,
 }
@@ -60,7 +63,7 @@ impl<'a> InteractiveBrowserCredentialOptions<'a> {
 #[derive(Debug)]
 pub struct InteractiveBrowserCredential<'a> {
     pub options: InteractiveBrowserCredentialOptions<'a>,
-    cache: IdTokenCache,
+    pub cache: IdTokenCache,
 }
 
 impl<'a> InteractiveBrowserCredential<'a> {
@@ -71,31 +74,35 @@ impl<'a> InteractiveBrowserCredential<'a> {
         redirect_url: Option<Url>,
         scopes: Option<&'a [&'a str]>,
     ) -> azure_core::Result<Self> {
-        let client_id = client_id.unwrap_or_else(|| DEFAULT_DEVELOPER_SIGNON_CLIENT_ID.to_owned());
+        let client_id = client_id
+            .clone()
+            .unwrap_or_else(|| DEFAULT_DEVELOPER_SIGNON_CLIENT_ID.to_owned());
 
-        let tenant_id = tenant_id.unwrap_or_else(|| DEFAULT_ORGANIZATIONS_TENANT_ID.to_owned());
+        let tenant_id = tenant_id
+            .clone()
+            .unwrap_or_else(|| DEFAULT_ORGANIZATIONS_TENANT_ID.to_owned());
 
         let redirect_url = redirect_url.unwrap_or_else(|| {
             Url::from_str(&format!("http://localhost:{}", LOCAL_SERVER_PORT))
                 .expect("Failed to parse redirect URL")
         });
 
-        let verified_scopes: &[&str] = match (scopes) {
-            Some(scopes_ok) => &(ensure_default_scopes(scopes_ok)),
-            None => &DEFAULT_SCOPE_ARR,
+        let verified_scopes: Vec<&'a str> = match scopes {
+            Some(scopes_ok) => ensure_default_scopes(scopes_ok),
+            None => DEFAULT_SCOPE_ARR.to_vec(), // &[&str;3] -> Vec<&str> ('static koert zu 'a)
         };
 
         Ok(Self {
             options: InteractiveBrowserCredentialOptions {
-                client_id,
-                tenant_id,
+                client_id: client_id.clone(),
+                tenant_id: tenant_id.clone(),
                 redirect_url,
                 local_http_client: new_http_client(),
-                scopes: verified_scopes,
+                scopes: verified_scopes.clone(),
             },
             cache: IdTokenCache::new(
-                client_id,
-                tenant_id,
+                client_id.clone(),
+                tenant_id.clone(),
                 verified_scopes.iter().map(|m| m.to_string()).collect(),
             ),
         })
@@ -104,7 +111,7 @@ impl<'a> InteractiveBrowserCredential<'a> {
     pub async fn get_access_token(&self) -> azure_core::Result<AccessToken> {
         info!("starting method");
 
-        let url = self.authorize(self.options.scopes);
+        let url = self.authorize(self.options.scopes.as_slice());
         match url {
             Ok(url) => {
                 debug!("url to open: {}", url.to_string());
@@ -113,7 +120,7 @@ impl<'a> InteractiveBrowserCredential<'a> {
                     .expect("Could not get auth context");
 
                 req_access_token(
-                    self.options.scopes,
+                    self.options.scopes.as_slice(),
                     self.options.clone(),
                     &option_hybrid_auth_context.auth_code,
                 )
@@ -126,7 +133,7 @@ impl<'a> InteractiveBrowserCredential<'a> {
         }
     }
 }
-impl InteractiveBrowserCredential {
+impl<'a> InteractiveBrowserCredential<'a> {
     fn authorize(&self, scopes: &[&str]) -> Result<Url, url::ParseError> {
         let InteractiveBrowserCredentialOptions {
             client_id,
@@ -154,7 +161,7 @@ impl InteractiveBrowserCredential {
 
 async fn req_access_token(
     scopes: &[&str],
-    options: InteractiveBrowserCredentialOptions,
+    options: InteractiveBrowserCredentialOptions<'_>,
     auth_code: &str,
 ) -> azure_core::Result<AccessToken> {
     let mut req = Request::new(
@@ -209,14 +216,23 @@ async fn req_access_token(
 fn ensure_default_scopes<'a>(scopes: &'a [&'a str]) -> Vec<&'a str> {
     let mut scope_set: HashSet<&'a str> = scopes.iter().copied().collect();
     let mut result = scopes.to_vec();
-
     for default_scope in DEFAULT_SCOPE_ARR.iter() {
         if scope_set.insert(default_scope) {
             result.push(default_scope);
         }
     }
-
     result
+}
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<'a> TokenCredential for InteractiveBrowserCredential<'a> {
+    async fn get_token(
+        &self,
+        scopes: &[&str],
+        options: Option<TokenRequestOptions>,
+    ) -> crate::Result<AccessToken> {
+        self.cache.get_token()
+    }
 }
 
 #[cfg(test)]
