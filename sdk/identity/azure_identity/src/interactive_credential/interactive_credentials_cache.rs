@@ -59,7 +59,7 @@ pub(crate) struct TokenCache(RwLock<HashMap<IdTokenCache, AccessToken>>);
 
 impl TokenCache {
     pub(crate) fn new() -> Self {
-        Self(RwLock::new(HashMap::new()))
+       Self(RwLock::new(HashMap::new()))
     }
 
     #[allow(dead_code)]

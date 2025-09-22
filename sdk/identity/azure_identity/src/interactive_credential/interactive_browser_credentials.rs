@@ -17,7 +17,7 @@ use tracing::{debug, info};
 use url::form_urlencoded;
 
 use crate::{
-    cache, interactive_credential::internal_server::open_url, EntraIdTokenResponse,
+    cache, interactive_credential::{interactive_credentials_cache::TokenCache, internal_server::open_url}, EntraIdTokenResponse,
     TokenCredentialOptions,
 };
 
@@ -63,7 +63,7 @@ impl<'a> InteractiveBrowserCredentialOptions<'a> {
 #[derive(Debug)]
 pub struct InteractiveBrowserCredential<'a> {
     pub options: InteractiveBrowserCredentialOptions<'a>,
-    pub cache: IdTokenCache,
+    pub cache: TokenCache
 }
 
 impl<'a> InteractiveBrowserCredential<'a> {
@@ -100,11 +100,7 @@ impl<'a> InteractiveBrowserCredential<'a> {
                 local_http_client: new_http_client(),
                 scopes: verified_scopes.clone(),
             },
-            cache: IdTokenCache::new(
-                client_id.clone(),
-                tenant_id.clone(),
-                verified_scopes.iter().map(|m| m.to_string()).collect(),
-            ),
+            cache:TokenCache::new(),
         })
     }
 
@@ -231,7 +227,9 @@ impl<'a> TokenCredential for InteractiveBrowserCredential<'a> {
         scopes: &[&str],
         options: Option<TokenRequestOptions>,
     ) -> crate::Result<AccessToken> {
-        self.cache.get_token()
+        let oid = self.options.client_id;
+        let tid = self.options.tenant_id;
+        self.cache.get_token(scopes,oid.clone(), tid.clone(),)
     }
 }
 
