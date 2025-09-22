@@ -12,6 +12,7 @@ pub const LOCAL_SERVER_PORT: u16 = 53298;
 #[derive(Debug)]
 pub struct HybridAuthContext {
     pub auth_code: String,
+    pub raw_id_token: String,
 }
 /// Opens the given URL in the default system browser and starts a local web server
 /// to receive the authorization code.
@@ -211,9 +212,9 @@ fn handle_client(mut stream: TcpStream) -> Option<HybridAuthContext> {
     info!("Full request headers:\n{}", headers);
     info!("Full request body:\n{}", body_str);
 
-    //let res_auth = extract_auth_information(&body_str);
+    let res_auth = extract_auth_information(&body_str);
 
-    let code = extract_auth_code(&body_str);
+    //let code = extract_auth_code(&body_str);
 
     let response_body = r#"<!DOCTYPE html>
 <html><head><title>Auth Complete</title></head>
@@ -230,9 +231,11 @@ fn handle_client(mut stream: TcpStream) -> Option<HybridAuthContext> {
     stream.flush().ok()?;
     stream.shutdown(Shutdown::Both).ok()?;
 
-    Some(HybridAuthContext {
-        auth_code: code.unwrap_or(String::from("NO VALUE")),
-    })
+    res_auth
+    //
+    //Some(HybridAuthContext {
+    //    auth_code: code.unwrap_or(String::from("NO VALUE")),
+    //})
 }
 ///method to decode the `id_token`
 ///
@@ -241,7 +244,7 @@ fn decode_id_token(id_token_encoded: &str, search_property: &str) -> Option<Stri
     let parts: Vec<&str> = id_token_encoded.split('.').collect();
 
     //decode base64
-    let id_token_decoded = general_purpose::URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
+    let id_token_decoded = general_purpose::URL_SAFE_NO_PAD.decode(parts[0]).ok()?;
 
     let id_token_json: serde_json::Value = serde_json::from_slice(&id_token_decoded).ok()?;
 
@@ -262,4 +265,33 @@ fn extract_auth_code(request: &str) -> Option<String> {
     let rest = &request[code_start..];
     let end = rest.find('&').unwrap_or(rest.len());
     Some(rest[..end].to_string())
+}
+
+fn extract_auth_information(body_str: &str) -> Option<HybridAuthContext> {
+    let parsed: std::collections::HashMap<_, _> = url::form_urlencoded::parse(body_str.as_bytes())
+        .into_owned()
+        .collect();
+
+    let code = parsed.get("code").cloned();
+    let id_token = parsed.get("client_info").cloned();
+
+    let auth_context: Option<HybridAuthContext> = match (code, id_token) {
+        (Some(auth_code), Some(id_token)) => {
+            let nonce = decode_id_token(&id_token, "nonce");
+            let oid_sub =
+                decode_id_token(&id_token, "uid").or_else(|| decode_id_token(&id_token, "sub"));
+            let tid = decode_id_token(&id_token, "utid");
+            match (nonce, oid_sub, tid) {
+                (Some(nonce), Some(oid_sub), Some(tid)) => Some(HybridAuthContext {
+                    raw_id_token: id_token,
+                    auth_code,
+                }),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+
+    info!("HybridAuthContext information: {:#?}", auth_context);
+    auth_context
 }

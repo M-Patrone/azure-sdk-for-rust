@@ -17,11 +17,12 @@ use tracing::{debug, info};
 use url::form_urlencoded;
 
 use crate::{
-    cache, interactive_credential::{interactive_credentials_cache::TokenCache, internal_server::open_url}, EntraIdTokenResponse,
-    TokenCredentialOptions,
+    cache,
+    interactive_credential::{
+        interactive_credentials_cache::TokenCache, internal_server::open_url,
+    },
+    EntraIdTokenResponse, TokenCredentialOptions,
 };
-
-use super::interactive_credentials_cache::IdTokenCache;
 
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
@@ -63,7 +64,7 @@ impl<'a> InteractiveBrowserCredentialOptions<'a> {
 #[derive(Debug)]
 pub struct InteractiveBrowserCredential<'a> {
     pub options: InteractiveBrowserCredentialOptions<'a>,
-    pub cache: TokenCache
+    pub cache: TokenCache,
 }
 
 impl<'a> InteractiveBrowserCredential<'a> {
@@ -100,11 +101,11 @@ impl<'a> InteractiveBrowserCredential<'a> {
                 local_http_client: new_http_client(),
                 scopes: verified_scopes.clone(),
             },
-            cache:TokenCache::new(),
+            cache: TokenCache::new(),
         })
     }
 
-    pub async fn get_access_token(&self) -> azure_core::Result<AccessToken> {
+    pub async fn get_token_impl(&self) -> azure_core::Result<AccessToken> {
         info!("starting method");
 
         let url = self.authorize(self.options.scopes.as_slice());
@@ -137,9 +138,11 @@ impl<'a> InteractiveBrowserCredential<'a> {
             redirect_url,
             ..
         } = self.options.clone();
-        let auth_url: Url =
-            Url::parse(&format!("{}/{}/oauth2/v2.0/authorize", AUTH_URL, tenant_id))
-                .expect("Invalid authorization endpoint URL");
+        let auth_url: Url = Url::parse(&format!(
+            "{}/{}/oauth2/v2.0/authorize?",
+            AUTH_URL, tenant_id
+        ))
+        .expect("Invalid authorization endpoint URL");
 
         let body_authorize = form_urlencoded::Serializer::new(String::new())
             .append_pair("client_id", &client_id)
@@ -227,9 +230,13 @@ impl<'a> TokenCredential for InteractiveBrowserCredential<'a> {
         scopes: &[&str],
         options: Option<TokenRequestOptions>,
     ) -> crate::Result<AccessToken> {
-        let oid = self.options.client_id;
-        let tid = self.options.tenant_id;
-        self.cache.get_token(scopes,oid.clone(), tid.clone(),)
+        let oid = &self.options.client_id;
+        let tid = &self.options.tenant_id;
+        let token = self
+            .cache
+            .get_token(scopes, oid.clone(), tid.clone(), self.get_token_impl())
+            .await;
+        return token;
     }
 }
 
@@ -255,9 +262,9 @@ mod tests {
         debug!("Starting interactive_auth_flow test");
 
         let credential_options =
-            InteractiveBrowserCredential::new(None, None, None).expect("Error on setting ");
+            InteractiveBrowserCredential::new(None, None, None, None).expect("Error on setting ");
 
-        let response = credential_options.get_access_token(None).await;
+        let response = credential_options.get_token(&DEFAULT_SCOPE_ARR, None).await;
 
         info!("after request {:#?}", response);
     }
