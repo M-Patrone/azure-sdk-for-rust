@@ -12,7 +12,8 @@ pub const LOCAL_SERVER_PORT: u16 = 53298;
 #[derive(Debug)]
 pub struct HybridAuthContext {
     pub auth_code: String,
-    pub raw_id_token: String,
+    pub oid: String,
+    pub tid: String,
 }
 /// Opens the given URL in the default system browser and starts a local web server
 /// to receive the authorization code.
@@ -277,13 +278,13 @@ fn extract_auth_information(body_str: &str) -> Option<HybridAuthContext> {
 
     let auth_context: Option<HybridAuthContext> = match (code, id_token) {
         (Some(auth_code), Some(id_token)) => {
-            let nonce = decode_id_token(&id_token, "nonce");
             let oid_sub =
                 decode_id_token(&id_token, "uid").or_else(|| decode_id_token(&id_token, "sub"));
             let tid = decode_id_token(&id_token, "utid");
-            match (nonce, oid_sub, tid) {
-                (Some(nonce), Some(oid_sub), Some(tid)) => Some(HybridAuthContext {
-                    raw_id_token: id_token,
+            match (oid_sub, tid) {
+                (Some(oid_sub), Some(tid)) => Some(HybridAuthContext {
+                    oid: oid_sub,
+                    tid,
                     auth_code,
                 }),
                 _ => None,
