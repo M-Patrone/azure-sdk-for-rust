@@ -76,6 +76,8 @@ impl TokenCache {
         tid: String,
         callback: impl Future<Output = azure_core::Result<AccessToken>>,
     ) -> azure_core::Result<AccessToken> {
+        println!("GET THE TOKEN FROM CACHE");
+
         // if the current cached token for this resource is good, return it.
         let token_cache = self.0.read().await;
         let scopes = scopes.iter().map(ToString::to_string).collect::<Vec<_>>();

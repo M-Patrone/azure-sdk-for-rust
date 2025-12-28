@@ -230,6 +230,8 @@ impl<'a> TokenCredential for InteractiveBrowserCredential<'a> {
         scopes: &[&str],
         options: Option<TokenRequestOptions>,
     ) -> crate::Result<AccessToken> {
+        println!("GETTING TOOOOOOOOKEN");
+
         let oid = &self.options.client_id;
         let tid = &self.options.tenant_id;
         let token = self
