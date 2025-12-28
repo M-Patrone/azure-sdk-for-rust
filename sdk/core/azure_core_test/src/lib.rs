@@ -7,6 +7,7 @@ pub mod credentials;
 #[cfg(doctest)]
 mod docs;
 pub mod http;
+pub mod perf;
 pub mod proxy;
 pub mod recorded;
 mod recording;
@@ -14,7 +15,6 @@ mod recording;
 mod root_readme;
 pub mod stream;
 pub mod tracing;
-
 use azure_core::Error;
 pub use azure_core::{error::ErrorKind, test::TestMode};
 pub use proxy::{matchers::*, sanitizers::*};
@@ -44,13 +44,14 @@ impl TestContext {
         module_dir: &'static str,
         name: &'static str,
     ) -> azure_core::Result<Self> {
-        let service_dir = parent_of(crate_dir, "sdk")
-            .ok_or_else(|| Error::message(ErrorKind::Other, "not under 'sdk' folder in repo"))?;
+        let service_dir = parent_of(crate_dir, "sdk").ok_or_else(|| {
+            Error::with_message(ErrorKind::Other, "not under 'sdk' folder in repo")
+        })?;
         let test_module = Path::new(module_dir)
             .file_stem()
-            .ok_or_else(|| Error::message(ErrorKind::Other, "invalid test module"))?
+            .ok_or_else(|| Error::with_message(ErrorKind::Other, "invalid test module"))?
             .to_str()
-            .ok_or_else(|| Error::message(ErrorKind::Other, "invalid test module"))?;
+            .ok_or_else(|| Error::with_message(ErrorKind::Other, "invalid test module"))?;
         Ok(Self {
             repo_dir: find_ancestor_of(crate_dir, ".git")?,
             crate_dir: Path::new(crate_dir),
@@ -183,7 +184,7 @@ pub fn load_dotenv_file(cargo_dir: impl AsRef<Path>) -> azure_core::Result<()> {
         ::tracing::debug!("loading environment variables from {}", path.display());
 
         use azure_core::error::ResultExt as _;
-        dotenvy::from_filename(&path).with_context(azure_core::error::ErrorKind::Io, || {
+        dotenvy::from_filename(&path).with_context_fn(azure_core::error::ErrorKind::Io, || {
             format!(
                 "failed to load environment variables from {}",
                 path.display()
@@ -223,7 +224,7 @@ fn find_ancestor_file(dir: impl AsRef<Path>, name: &str) -> azure_core::Result<P
         // Keep looking until we get to the repo root where `.git` is either a directory (primary repo) or file (worktree).
         let path = dir.join(".git");
         if path.exists() {
-            return Err(azure_core::Error::message(
+            return Err(azure_core::Error::with_message(
                 ErrorKind::Io,
                 format!("{name} not found under repo {}", dir.display()),
             ));

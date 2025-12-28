@@ -1,17 +1,18 @@
 // Copyright (c) Microsoft Corporation. All Rights reserved
 // Licensed under the MIT license.
 
-use super::{
+#[cfg(all(feature = "fe2o3_amqp", not(target_arch = "wasm32")))]
+use crate::fe2o3::error::Fe2o3SerializationError;
+#[cfg(all(feature = "fe2o3_amqp", not(target_arch = "wasm32")))]
+use crate::AmqpError;
+#[cfg(feature = "ffi")]
+use crate::Deserializable;
+use crate::{
+    error::Result,
     simple_value::AmqpSimpleValue,
     value::{AmqpList, AmqpOrderedMap, AmqpSymbol, AmqpTimestamp, AmqpValue},
 };
-#[cfg(all(feature = "fe2o3_amqp", not(target_arch = "wasm32")))]
-use crate::fe2o3::error::Fe2o3SerializationError;
-#[cfg(feature = "cplusplus")]
-use crate::Deserializable;
-#[cfg(feature = "cplusplus")]
-use azure_core::error::ErrorKind;
-use azure_core::{time::Duration, Result, Uuid};
+use azure_core::{time::Duration, Uuid};
 use typespec_macros::SafeDebug;
 
 #[cfg(all(feature = "fe2o3_amqp", not(target_arch = "wasm32")))]
@@ -20,10 +21,14 @@ type DeliveryImplementation = super::fe2o3::messaging::messaging_types::Fe2o3Amq
 #[cfg(any(not(feature = "fe2o3_amqp"), target_arch = "wasm32"))]
 type DeliveryImplementation = super::noop::NoopAmqpDelivery;
 
+/// Durability of the terminus (source or target).
 #[derive(Debug, Clone, PartialEq)]
 pub enum TerminusDurability {
+    /// No durability guarantees.
     None,
+    /// Configuration durability guarantees.
     Configuration,
+    /// Unsettled state durability guarantees.
     UnsettledState,
 }
 
@@ -37,11 +42,16 @@ impl From<TerminusDurability> for AmqpSymbol {
     }
 }
 
+/// Expiry policy of the terminus (source or target).
 #[derive(Debug, Clone, PartialEq)]
 pub enum TerminusExpiryPolicy {
+    /// Expiry policy for link detach.
     LinkDetach,
+    /// Expiry policy for session end.
     SessionEnd,
+    /// Expiry policy for connection close.
     ConnectionClose,
+    /// Expiry policy for never.
     Never,
 }
 
@@ -68,9 +78,12 @@ impl From<&AmqpSymbol> for TerminusExpiryPolicy {
     }
 }
 
+/// Distribution mode for the source.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DistributionMode {
+    /// Move the message to the target.
     Move,
+    /// Copy the message to the target.
     Copy,
 }
 
@@ -93,11 +106,14 @@ impl From<&AmqpSymbol> for DistributionMode {
     }
 }
 
+/// An AMQP Delivery.
+///
+/// A delivery represents a message that has been sent or received over an AMQP link. It contains the message itself, as well as metadata about the delivery, such as its ID and tag.
 #[derive(Debug)]
 pub struct AmqpDelivery(pub(crate) DeliveryImplementation);
 
 impl AmqpDelivery {
-    #[allow(dead_code)]
+    #[cfg(all(feature = "fe2o3_amqp", not(target_arch = "wasm32")))]
     pub(crate) fn new(delivery: DeliveryImplementation) -> AmqpDelivery {
         AmqpDelivery(delivery)
     }
@@ -106,11 +122,17 @@ impl AmqpDelivery {
 pub type DeliveryNumber = u32;
 pub type DeliveryTag = Vec<u8>;
 
+/// Trait defining the APIs for interacting with an AMQP delivery.
 pub trait AmqpDeliveryApis {
+    /// Get the message
     fn message(&self) -> &AmqpMessage;
+    /// Get the delivery ID
     fn delivery_id(&self) -> DeliveryNumber;
+    /// Get the delivery tag
     fn delivery_tag(&self) -> &DeliveryTag;
+    /// Get the message format
     fn message_format(&self) -> &Option<u32>;
+    /// Consume the delivery into the message
     fn into_message(self) -> AmqpMessage;
 }
 
@@ -141,11 +163,18 @@ impl AmqpDeliveryApis for AmqpDelivery {
     }
 }
 
+/// A Delivery Outcome
+///
+/// The outcome of a delivery indicates the final state of the message.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AmqpOutcome {
+    /// The message was accepted.
     Accepted,
+    /// The message was rejected.
     Rejected,
+    /// The message was released.
     Released,
+    /// The message was modified before forwarding.
     Modified,
 }
 
@@ -172,11 +201,18 @@ impl From<&AmqpSymbol> for AmqpOutcome {
     }
 }
 
+/// AMQP Message Id
+///
+/// See the [AMQP specification](https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-properties) for more information.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AmqpMessageId {
+    /// A string message ID.
     String(String),
+    /// A UUID message ID.
     Uuid(Uuid),
+    /// A binary message ID.
     Binary(Vec<u8>),
+    /// An unsigned 64 bit integer message ID.
     Ulong(u64),
 }
 
@@ -227,49 +263,31 @@ impl From<AmqpMessageId> for AmqpValue {
     }
 }
 
-/// A target node in an AMQP message
+/// An AMQP link target.
+///
+/// See the [AMQP specification](https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-target) for more information.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AmqpTarget {
-    address: Option<String>,
-    durable: Option<TerminusDurability>,
-    expiry_policy: Option<TerminusExpiryPolicy>,
-    timeout: Option<u32>,
-    dynamic: Option<bool>,
-    dynamic_node_properties: Option<AmqpOrderedMap<String, AmqpValue>>,
-    capabilities: Option<Vec<AmqpValue>>,
+    ///  The address of the target.
+    pub address: Option<String>,
+    /// Returns the durability of the target.
+    pub durable: Option<TerminusDurability>,
+    /// Returns the expiry policy of the target.
+    pub expiry_policy: Option<TerminusExpiryPolicy>,
+    /// Returns the timeout of the target.
+    pub timeout: Option<u32>,
+    ///  Whether the target is dynamic.
+    pub dynamic: Option<bool>,
+    ///  The dynamic node properties of the target.
+    pub dynamic_node_properties: Option<AmqpOrderedMap<String, AmqpValue>>,
+    ///  The capabilities of the target.
+    pub capabilities: Option<Vec<AmqpValue>>,
 }
 
 impl AmqpTarget {
+    /// Creates a new builder for an [`AmqpTarget`].
     pub fn builder() -> builders::AmqpTargetBuilder {
         builders::AmqpTargetBuilder::new()
-    }
-
-    pub fn address(&self) -> Option<&str> {
-        self.address.as_deref()
-    }
-
-    pub fn durable(&self) -> Option<&TerminusDurability> {
-        self.durable.as_ref()
-    }
-
-    pub fn expiry_policy(&self) -> Option<&TerminusExpiryPolicy> {
-        self.expiry_policy.as_ref()
-    }
-
-    pub fn timeout(&self) -> Option<&u32> {
-        self.timeout.as_ref()
-    }
-
-    pub fn dynamic(&self) -> Option<&bool> {
-        self.dynamic.as_ref()
-    }
-
-    pub fn dynamic_node_properties(&self) -> Option<&AmqpOrderedMap<String, AmqpValue>> {
-        self.dynamic_node_properties.as_ref()
-    }
-
-    pub fn capabilities(&self) -> Option<&[AmqpValue]> {
-        self.capabilities.as_deref()
     }
 }
 
@@ -295,7 +313,7 @@ impl From<String> for AmqpTarget {
     }
 }
 
-#[cfg(feature = "cplusplus")]
+#[cfg(feature = "ffi")]
 impl From<AmqpList> for AmqpTarget {
     fn from(list: AmqpList) -> Self {
         let mut builder = AmqpTarget::builder();
@@ -357,7 +375,7 @@ impl From<AmqpList> for AmqpTarget {
     }
 }
 
-#[cfg(feature = "cplusplus")]
+#[cfg(feature = "ffi")]
 impl From<AmqpTarget> for AmqpList {
     fn from(target: AmqpTarget) -> Self {
         let mut list = vec![AmqpValue::Null; 7];
@@ -396,6 +414,7 @@ impl From<AmqpTarget> for AmqpList {
     }
 }
 
+/// A filter that can be applied to an AMQP source.
 #[derive(Debug, Default)]
 pub struct AmqpSourceFilter {
     descriptor: &'static str,
@@ -407,41 +426,59 @@ impl AmqpSourceFilter {
         Self { descriptor, code }
     }
 
+    /// Returns the description of the filter.
     pub fn description(&self) -> &'static str {
         self.descriptor
     }
+
+    /// Returns the code of the filter.
     pub fn code(&self) -> u64 {
         self.code
     }
 
+    /// Creates a selector filter.
     pub fn selector_filter() -> AmqpSourceFilter {
         AmqpSourceFilter::new("apache.org:selector-filter:string", 0x0000468_c00000004)
     }
 }
 
-/// A source node in an AMQP message
+/// An AMQP message source.
+///
+/// See the [AMQP specification](https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-source) for more information.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AmqpSource {
+    /// The address of the source.
     pub address: Option<String>,
+    /// The durability of the source.
     pub durable: Option<TerminusDurability>,
+    /// The expiry policy of the source.
     pub expiry_policy: Option<TerminusExpiryPolicy>,
+    /// The timeout of the source.
     pub timeout: Option<u32>,
+    /// Whether the source is dynamic.
     pub dynamic: Option<bool>,
+    /// The dynamic node properties of the source.
     pub dynamic_node_properties: Option<AmqpOrderedMap<AmqpSymbol, AmqpValue>>,
+    /// The distribution mode of the source.
     pub distribution_mode: Option<DistributionMode>,
+    /// The filter applied to the source.
     pub filter: Option<AmqpOrderedMap<AmqpSymbol, AmqpValue>>,
+    /// The default outcome of the source.
     pub default_outcome: Option<AmqpOutcome>,
+    /// The possible outcomes of the source.
     pub outcomes: Option<Vec<AmqpSymbol>>,
+    /// The capabilities of the source.
     pub capabilities: Option<Vec<AmqpSymbol>>,
 }
 
 impl AmqpSource {
+    /// Creates a new builder for an [`AmqpSource`].
     pub fn builder() -> builders::AmqpSourceBuilder {
         builders::AmqpSourceBuilder::new()
     }
 }
 
-#[cfg(feature = "cplusplus")]
+#[cfg(feature = "ffi")]
 impl From<AmqpList> for AmqpSource {
     fn from(list: AmqpList) -> Self {
         let mut builder = AmqpSource::builder();
@@ -526,7 +563,7 @@ impl From<AmqpList> for AmqpSource {
     }
 }
 
-#[cfg(feature = "cplusplus")]
+#[cfg(feature = "ffi")]
 impl From<AmqpSource> for AmqpList {
     fn from(source: AmqpSource) -> Self {
         let mut list = vec![AmqpValue::Null; 11];
@@ -581,12 +618,24 @@ impl From<AmqpSource> for AmqpList {
     }
 }
 
+/// AMQP Message Header
+///
+/// See the [AMQP specification](https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-header) for more information.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AmqpMessageHeader {
+    /// If true, the message is durable.
     pub durable: bool,
+
+    /// The priority of the message.
     pub priority: u8,
+
+    /// The time to live of the message.
     pub time_to_live: Option<Duration>,
+
+    /// If true, the message is the first acquirer.
     pub first_acquirer: bool,
+
+    /// The delivery count of the message.
     pub delivery_count: u32,
 }
 
@@ -613,7 +662,7 @@ impl AmqpMessageHeader {}
 /// See also [Amqp Header](https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-header) for more information
 ///
 ///
-#[cfg(feature = "cplusplus")]
+#[cfg(feature = "ffi")]
 impl From<AmqpList> for AmqpMessageHeader {
     fn from(list: AmqpList) -> Self {
         let mut header = AmqpMessageHeader::default();
@@ -647,7 +696,7 @@ impl From<AmqpList> for AmqpMessageHeader {
     }
 }
 
-#[cfg(feature = "cplusplus")]
+#[cfg(feature = "ffi")]
 impl From<AmqpMessageHeader> for AmqpList {
     fn from(header: AmqpMessageHeader) -> AmqpList {
         let mut list = vec![AmqpValue::Null; 5];
@@ -683,20 +732,48 @@ impl From<AmqpMessageHeader> for AmqpList {
     }
 }
 
+/// AMQP Message Properties
+///
+/// See the [AMQP specification](https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-properties) for more information.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AmqpMessageProperties {
+    /// The message ID.
     pub message_id: Option<AmqpMessageId>,
+
+    /// The user ID.
     pub user_id: Option<Vec<u8>>,
+
+    /// The destination address for the message.
     pub to: Option<String>,
+
+    /// The subject of the message.
     pub subject: Option<String>,
+
+    /// The address to reply to.
     pub reply_to: Option<String>,
+
+    /// The correlation ID.
     pub correlation_id: Option<AmqpMessageId>,
+
+    /// The content type of the message.
     pub content_type: Option<AmqpSymbol>,
+
+    /// The content encoding of the message.
     pub content_encoding: Option<AmqpSymbol>,
+
+    /// The absolute expiry time of the message.
     pub absolute_expiry_time: Option<AmqpTimestamp>,
+
+    /// The creation time of the message.
     pub creation_time: Option<AmqpTimestamp>,
+
+    /// The group ID of the message.
     pub group_id: Option<String>,
+
+    /// The group sequence of the message.
     pub group_sequence: Option<u32>,
+
+    /// The reply-to group ID of the message.
     pub reply_to_group_id: Option<String>,
 }
 
@@ -710,7 +787,7 @@ impl AmqpMessageProperties {}
 /// See also [Amqp Header](https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-properties) for more information
 ///
 ///
-#[cfg(feature = "cplusplus")]
+#[cfg(feature = "ffi")]
 impl From<AmqpList> for AmqpMessageProperties {
     fn from(list: AmqpList) -> Self {
         let mut message_properties = AmqpMessageProperties::default();
@@ -810,7 +887,7 @@ impl From<AmqpList> for AmqpMessageProperties {
     }
 }
 
-#[cfg(feature = "cplusplus")]
+#[cfg(feature = "ffi")]
 impl From<AmqpMessageProperties> for AmqpList {
     fn from(properties: AmqpMessageProperties) -> AmqpList {
         let mut list = vec![AmqpValue::Null; 13];
@@ -893,12 +970,19 @@ fn test_size_of_serialized_timestamp() {
     assert!(size_result.is_ok());
 }
 
+/// An AMQP message body.
+///
+/// See the [AMQP specification](https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-body) for more information.
 #[derive(SafeDebug, Clone, PartialEq, Default)]
 pub enum AmqpMessageBody {
+    /// The body of the message is an array of binary data.
     Binary(Vec<Vec<u8>>),
+    /// The body of the message is an array of lists.
     Sequence(Vec<AmqpList>),
+    /// The body of the message is a single AMQP value.
     Value(AmqpValue),
     #[default]
+    /// The message has no body.
     Empty,
 }
 
@@ -938,9 +1022,14 @@ impl From<Vec<AmqpList>> for AmqpMessageBody {
     }
 }
 
+/// The key for an AMQP annotation.
+///
+/// See also: [AMQP Type Annotations](https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-annotations)
 #[derive(Debug, Clone, PartialEq)]
 pub enum AmqpAnnotationKey {
+    /// An AMQP symbol.
     Symbol(AmqpSymbol),
+    /// An AMQP ulong.
     Ulong(u64),
 }
 
@@ -958,7 +1047,7 @@ impl AsRef<AmqpAnnotationKey> for AmqpAnnotationKey {
 
 // Implementing From for AmqpValue to AmqpAnnotationKey
 // Note that this is a lossy conversion as AmqpValue can contain other types.
-// See also: https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-annotations
+/// See also: [AMQP Type Annotations](https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-annotations)
 //
 impl From<AmqpValue> for AmqpAnnotationKey {
     fn from(value: AmqpValue) -> Self {
@@ -1012,14 +1101,20 @@ impl PartialEq<&str> for AmqpAnnotationKey {
     }
 }
 
+/// AMQP Annotations
+///
+/// See also: [AMQP Type Annotations](https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-annotations)
+///
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AmqpAnnotations(pub AmqpOrderedMap<AmqpAnnotationKey, AmqpValue>);
 
 impl AmqpAnnotations {
+    /// Create a new set of AMQP annotations.
     pub fn new() -> Self {
         AmqpAnnotations(AmqpOrderedMap::new())
     }
 
+    /// Insert a new annotation into the set.
     pub fn insert(&mut self, key: impl Into<AmqpAnnotationKey>, value: impl Into<AmqpValue>) {
         self.0.insert(key.into(), value.into());
     }
@@ -1039,14 +1134,19 @@ where
     }
 }
 
+/// AMQP Application Properties
+///
+/// See also: [AMQP Application Properties](https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-application-properties)
 #[derive(SafeDebug, Clone, PartialEq, Default)]
 pub struct AmqpApplicationProperties(pub AmqpOrderedMap<String, AmqpSimpleValue>);
 
 impl AmqpApplicationProperties {
+    /// Create a new set of AMQP application properties.
     pub fn new() -> Self {
         AmqpApplicationProperties(AmqpOrderedMap::new())
     }
 
+    /// Insert a new application property into the set.
     pub fn insert(&mut self, key: String, value: impl Into<AmqpSimpleValue>) {
         self.0.insert(key, value.into());
     }
@@ -1059,16 +1159,34 @@ impl AmqpApplicationProperties {
 /// It is defined in the following specification:
 /// <https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#section-message-format>
 ///
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(SafeDebug, Clone, PartialEq, Default)]
 pub struct AmqpMessage {
-    pub(crate) body: AmqpMessageBody,
-    pub(crate) header: Option<AmqpMessageHeader>,
-    // Application properties may potentially contain PII.
-    pub(crate) application_properties: Option<AmqpApplicationProperties>,
-    pub(crate) message_annotations: Option<AmqpAnnotations>,
-    pub(crate) delivery_annotations: Option<AmqpAnnotations>,
-    pub(crate) properties: Option<AmqpMessageProperties>,
-    pub(crate) footer: Option<AmqpAnnotations>,
+    /// The body of the message.
+    pub body: AmqpMessageBody,
+
+    /// The header of the message.
+    #[safe(true)]
+    pub header: Option<AmqpMessageHeader>,
+    /// Application specific properties for the message.
+    ///
+    /// # Note: Application properties may potentially contain PII.
+    pub application_properties: Option<AmqpApplicationProperties>,
+
+    /// Annotations for the message.
+    #[safe(true)]
+    pub message_annotations: Option<AmqpAnnotations>,
+
+    /// Delivery annotations for the message.
+    #[safe(true)]
+    pub delivery_annotations: Option<AmqpAnnotations>,
+
+    /// Properties for the message.
+    #[safe(true)]
+    pub properties: Option<AmqpMessageProperties>,
+
+    /// Footer annotations for the message.
+    #[safe(true)]
+    pub footer: Option<AmqpAnnotations>,
 }
 
 impl AsRef<AmqpMessage> for AmqpMessage {
@@ -1078,36 +1196,9 @@ impl AsRef<AmqpMessage> for AmqpMessage {
 }
 
 impl AmqpMessage {
+    /// Creates a new builder for an [`AmqpMessage`].
     pub fn builder() -> builders::AmqpMessageBuilder {
         builders::AmqpMessageBuilder::new()
-    }
-
-    pub fn body(&self) -> &AmqpMessageBody {
-        &self.body
-    }
-
-    pub fn header(&self) -> Option<&AmqpMessageHeader> {
-        self.header.as_ref()
-    }
-
-    pub fn application_properties(&self) -> Option<&AmqpApplicationProperties> {
-        self.application_properties.as_ref()
-    }
-
-    pub fn message_annotations(&self) -> Option<&AmqpAnnotations> {
-        self.message_annotations.as_ref()
-    }
-
-    pub fn delivery_annotations(&self) -> Option<&AmqpAnnotations> {
-        self.delivery_annotations.as_ref()
-    }
-
-    pub fn properties(&self) -> Option<&AmqpMessageProperties> {
-        self.properties.as_ref()
-    }
-
-    pub fn footer(&self) -> Option<&AmqpAnnotations> {
-        self.footer.as_ref()
     }
 
     /// Set the message ID for the message.
@@ -1188,7 +1279,11 @@ impl AmqpMessage {
         self.body = body.into();
     }
 
-    #[allow(unused_variables)]
+    /// Serialize the AMQP message to a vector of bytes.
+    #[cfg_attr(
+        any(not(feature = "fe2o3_amqp"), target_arch = "wasm32"),
+        allow(unused_variables)
+    )]
     pub fn serialize(message: &AmqpMessage) -> Result<Vec<u8>> {
         #[cfg(all(feature = "fe2o3_amqp", not(target_arch = "wasm32")))]
         {
@@ -1198,7 +1293,7 @@ impl AmqpMessage {
             let res = serde_amqp::ser::to_vec(
                 &fe2o3_amqp_types::messaging::message::__private::Serializable(amqp_message),
             )
-            .map_err(|e| azure_core::Error::from(Fe2o3SerializationError(e)))?;
+            .map_err(|e| AmqpError::from(Fe2o3SerializationError(e)))?;
             Ok(res)
         }
         #[cfg(any(not(feature = "fe2o3_amqp"), target_arch = "wasm32"))]
@@ -1308,9 +1403,9 @@ impl From<AmqpList> for AmqpMessage {
         }
     }
 }
-#[cfg(feature = "cplusplus")]
+#[cfg(feature = "ffi")]
 impl Deserializable<AmqpMessage> for AmqpMessage {
-    fn decode(data: &[u8]) -> azure_core::Result<AmqpMessage> {
+    fn decode(data: &[u8]) -> Result<AmqpMessage> {
         #[cfg(all(feature = "fe2o3_amqp", not(target_arch = "wasm32")))]
         {
             let value = serde_amqp::de::from_slice::<
@@ -1320,7 +1415,7 @@ impl Deserializable<AmqpMessage> for AmqpMessage {
                     >,
                 >,
             >(data)
-            .map_err(|e| azure_core::error::Error::new(ErrorKind::Other, e))?;
+            .map_err(|e| AmqpError::from(Fe2o3SerializationError(e)))?;
             Ok((&value.0).into())
         }
     }
@@ -1329,6 +1424,7 @@ impl Deserializable<AmqpMessage> for AmqpMessage {
 pub(crate) mod builders {
     use super::*;
 
+    /// Builder for creating AMQP source.
     pub struct AmqpSourceBuilder {
         source: AmqpSource,
     }
@@ -1339,26 +1435,38 @@ pub(crate) mod builders {
                 source: Default::default(),
             }
         }
+
+        /// Set the address for the source.
         pub fn with_address(mut self, address: String) -> Self {
             self.source.address = Some(address);
             self
         }
+
+        /// Set the durability for the source.
         pub fn with_durable(mut self, durable: TerminusDurability) -> Self {
             self.source.durable = Some(durable);
             self
         }
+
+        /// Set the expiry policy for the source.
         pub fn with_expiry_policy(mut self, expiry_policy: TerminusExpiryPolicy) -> Self {
             self.source.expiry_policy = Some(expiry_policy);
             self
         }
+
+        /// Set the timeout for the source.
         pub fn with_timeout(mut self, timeout: u32) -> Self {
             self.source.timeout = Some(timeout);
             self
         }
+
+        /// Set whether the source is dynamic.
         pub fn with_dynamic(mut self, dynamic: bool) -> Self {
             self.source.dynamic = Some(dynamic);
             self
         }
+
+        /// Set the dynamic node properties for the source.
         pub fn with_dynamic_node_properties(
             mut self,
             dynamic_node_properties: impl Into<AmqpOrderedMap<AmqpSymbol, AmqpValue>>,
@@ -1366,10 +1474,14 @@ pub(crate) mod builders {
             self.source.dynamic_node_properties = Some(dynamic_node_properties.into());
             self
         }
+
+        /// Set the distribution mode for the source.
         pub fn with_distribution_mode(mut self, distribution_mode: DistributionMode) -> Self {
             self.source.distribution_mode = Some(distribution_mode);
             self
         }
+
+        /// Set the filter for the source.
         pub fn with_filter(
             mut self,
             filter: impl Into<AmqpOrderedMap<AmqpSymbol, AmqpValue>>,
@@ -1377,6 +1489,8 @@ pub(crate) mod builders {
             self.source.filter = Some(filter.into());
             self
         }
+
+        /// Add a filter to the source.
         pub fn add_to_filter(mut self, key: AmqpSymbol, value: impl Into<AmqpValue>) -> Self {
             if let Some(filter) = &mut self.source.filter {
                 filter.insert(key, value.into());
@@ -1387,28 +1501,38 @@ pub(crate) mod builders {
             }
             self
         }
+
+        /// Set the default outcome for the source.
         pub fn with_default_outcome(mut self, default_outcome: AmqpOutcome) -> Self {
             self.source.default_outcome = Some(default_outcome);
             self
         }
+
+        /// Set the outcomes for the source.
         pub fn with_outcomes(mut self, outcomes: Vec<AmqpSymbol>) -> Self {
             self.source.outcomes = Some(outcomes);
             self
         }
+
+        /// Set the capabilities for the source.
         pub fn with_capabilities(mut self, capabilities: Vec<AmqpSymbol>) -> Self {
             self.source.capabilities = Some(capabilities);
             self
         }
+
+        /// Build the AMQP source.
         pub fn build(&self) -> AmqpSource {
             self.source.clone()
         }
     }
 
+    /// Builder for creating an AMQP target.
     pub struct AmqpTargetBuilder {
         target: AmqpTarget,
     }
 
     impl AmqpTargetBuilder {
+        /// Build the AMQP target.
         pub fn build(&self) -> AmqpTarget {
             self.target.clone()
         }
@@ -1417,26 +1541,38 @@ pub(crate) mod builders {
                 target: Default::default(),
             }
         }
+
+        /// Set the address for the target.
         pub fn with_address(mut self, address: String) -> Self {
             self.target.address = Some(address);
             self
         }
+
+        /// Set the durability for the target.
         pub fn with_durable(mut self, durable: TerminusDurability) -> Self {
             self.target.durable = Some(durable);
             self
         }
+
+        /// Set the expiry policy for the target.
         pub fn with_expiry_policy(mut self, expiry_policy: TerminusExpiryPolicy) -> Self {
             self.target.expiry_policy = Some(expiry_policy);
             self
         }
+
+        /// Set the timeout for the target.
         pub fn with_timeout(mut self, timeout: u32) -> Self {
             self.target.timeout = Some(timeout);
             self
         }
+
+        /// Set whether the target is dynamic.
         pub fn with_dynamic(mut self, dynamic: bool) -> Self {
             self.target.dynamic = Some(dynamic);
             self
         }
+
+        /// Set the dynamic node properties for the target.
         pub fn with_dynamic_node_properties(
             mut self,
             dynamic_node_properties: impl Into<AmqpOrderedMap<String, AmqpValue>>,
@@ -1444,17 +1580,21 @@ pub(crate) mod builders {
             self.target.dynamic_node_properties = Some(dynamic_node_properties.into());
             self
         }
+
+        /// Set the capabilities for the target.
         pub fn with_capabilities(mut self, capabilities: Vec<AmqpValue>) -> Self {
             self.target.capabilities = Some(capabilities);
             self
         }
     }
 
+    /// Builder for creating an AMQP message.
     pub struct AmqpMessageBuilder {
         message: AmqpMessage,
     }
 
     impl AmqpMessageBuilder {
+        /// Build the AMQP message.
         pub fn build(&self) -> AmqpMessage {
             self.message.clone()
         }
@@ -1463,10 +1603,14 @@ pub(crate) mod builders {
                 message: Default::default(),
             }
         }
+
+        /// Set the body for the message.
         pub fn with_body(mut self, body: impl Into<AmqpMessageBody>) -> Self {
             self.message.body = body.into();
             self
         }
+
+        /// Add a binary body to the message.
         pub fn add_message_body_binary(mut self, body: Vec<u8>) -> Self {
             match &mut self.message.body {
                 AmqpMessageBody::Binary(bodies) => {
@@ -1481,6 +1625,8 @@ pub(crate) mod builders {
             }
             self
         }
+
+        /// Add a sequence body to the message.
         pub fn add_message_body_sequence(mut self, body: AmqpList) -> Self {
             match &mut self.message.body {
                 AmqpMessageBody::Sequence(bodies) => {
@@ -1495,10 +1641,14 @@ pub(crate) mod builders {
             }
             self
         }
+
+        /// Add the header to the message.
         pub fn with_header(mut self, header: AmqpMessageHeader) -> Self {
             self.message.header = Some(header);
             self
         }
+
+        /// Add application properties to the message.
         pub fn with_application_properties(
             mut self,
             application_properties: AmqpApplicationProperties,
@@ -1506,6 +1656,8 @@ pub(crate) mod builders {
             self.message.application_properties = Some(application_properties);
             self
         }
+
+        /// Add an application property to the message.
         pub fn add_application_property(
             mut self,
             key: String,
@@ -1521,14 +1673,20 @@ pub(crate) mod builders {
             }
             self
         }
+
+        /// Set the message annotations for the message.
         pub fn with_message_annotations(mut self, message_annotations: AmqpAnnotations) -> Self {
             self.message.message_annotations = Some(message_annotations);
             self
         }
+
+        /// Set the delivery annotations for the message.
         pub fn with_delivery_annotations(mut self, delivery_annotations: AmqpAnnotations) -> Self {
             self.message.delivery_annotations = Some(delivery_annotations);
             self
         }
+
+        /// Set the properties for the message.
         pub fn with_properties<T>(mut self, properties: T) -> Self
         where
             T: Into<AmqpMessageProperties>,
@@ -1536,6 +1694,8 @@ pub(crate) mod builders {
             self.message.properties = Some(properties.into());
             self
         }
+
+        /// Set the footer for the message.
         pub fn with_footer(mut self, footer: AmqpAnnotations) -> Self {
             self.message.footer = Some(footer);
             self
@@ -1695,24 +1855,18 @@ mod tests {
     #[test]
     fn amqp_message_inferences() {
         let message = AmqpMessage::from(vec![1, 2, 3]);
-        assert_eq!(
-            message.body(),
-            &AmqpMessageBody::Binary(vec![vec![1, 2, 3]])
-        );
+        assert_eq!(message.body, AmqpMessageBody::Binary(vec![vec![1, 2, 3]]));
 
         let message = AmqpMessage::from(AmqpValue::from(123));
-        assert_eq!(
-            message.body(),
-            &AmqpMessageBody::Value(AmqpValue::from(123))
-        );
+        assert_eq!(message.body, AmqpMessageBody::Value(AmqpValue::from(123)));
 
         let message = AmqpMessage::from(AmqpList::from(vec![
             AmqpValue::from(123),
             AmqpValue::from("ABC"),
         ]));
         assert_eq!(
-            message.body(),
-            &AmqpMessageBody::Sequence(vec![AmqpList::from(vec![
+            message.body,
+            AmqpMessageBody::Sequence(vec![AmqpList::from(vec![
                 AmqpValue::from(123),
                 AmqpValue::from("ABC")
             ])])
@@ -2038,7 +2192,7 @@ mod tests {
             assert_eq!(amqp_message, value.0);
         }
 
-        #[cfg(feature = "cplusplus")]
+        #[cfg(feature = "ffi")]
         {
             let deserialized = AmqpMessage::decode(&serialized).unwrap();
             assert_eq!(deserialized, message);

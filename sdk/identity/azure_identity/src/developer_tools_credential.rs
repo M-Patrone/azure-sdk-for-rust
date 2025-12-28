@@ -39,6 +39,10 @@ pub struct DeveloperToolsCredential {
 }
 
 impl DeveloperToolsCredential {
+    /// Creates a new instance of `DeveloperToolsCredential`.
+    ///
+    /// # Arguments
+    /// * `options`: Options for configuring the credential. If `None` is provided, default options will be used.
     pub fn new(
         options: Option<DeveloperToolsCredentialOptions>,
     ) -> azure_core::Result<Arc<DeveloperToolsCredential>> {
@@ -60,7 +64,7 @@ impl DeveloperToolsCredential {
     }
 
     #[cfg(test)]
-    pub fn new_with_sources(
+    pub(crate) fn new_with_sources(
         sources: Vec<Arc<dyn TokenCredential>>,
     ) -> azure_core::Result<Arc<DeveloperToolsCredential>> {
         Ok(Arc::new(Self {
@@ -81,7 +85,7 @@ impl TokenCredential for DeveloperToolsCredential {
     async fn get_token(
         &self,
         scopes: &[&str],
-        options: Option<TokenRequestOptions>,
+        options: Option<TokenRequestOptions<'_>>,
     ) -> azure_core::Result<AccessToken> {
         let cached_index = self.cached_source_index.load(Ordering::Relaxed);
         if cached_index != usize::MAX {
@@ -102,7 +106,7 @@ impl TokenCredential for DeveloperToolsCredential {
                 Err(error) => errors.push(error),
             }
         }
-        Err(Error::with_message(ErrorKind::Credential, || {
+        Err(Error::with_message_fn(ErrorKind::Credential, || {
             format!(
                 "Multiple errors were encountered while attempting to authenticate:\n{}",
                 format_aggregate_error(&errors)
@@ -162,7 +166,7 @@ mod tests {
         async fn get_token(
             &self,
             _scopes: &[&str],
-            _options: Option<TokenRequestOptions>,
+            _options: Option<TokenRequestOptions<'_>>,
         ) -> azure_core::Result<AccessToken> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             if self.succeed {
@@ -171,7 +175,7 @@ mod tests {
                     expires_on: (SystemTime::now() + Duration::from_secs(3600)).into(),
                 })
             } else {
-                Err(Error::with_message(ErrorKind::Credential, || {
+                Err(Error::with_message_fn(ErrorKind::Credential, || {
                     format!("{} failed", self.id)
                 }))
             }

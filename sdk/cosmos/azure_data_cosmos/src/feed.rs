@@ -1,5 +1,12 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
 use async_trait::async_trait;
-use azure_core::http::{headers::Headers, ItemIterator, Page, PagerResult, RawResponse};
+use azure_core::http::{
+    headers::Headers,
+    pager::{Page, PagerResult},
+    ItemIterator, RawResponse,
+};
 use serde::{de::DeserializeOwned, Deserialize};
 
 use crate::constants;
@@ -90,7 +97,7 @@ impl<T: DeserializeOwned> FeedPage<T> {
     pub(crate) async fn from_response(response: RawResponse) -> azure_core::Result<Self> {
         let headers = response.headers().clone();
         let continuation = headers.get_optional_string(&constants::CONTINUATION);
-        let body: FeedBody<T> = response.into_body().json().await?;
+        let body: FeedBody<T> = response.into_body().json()?;
 
         Ok(Self {
             items: body.items,
@@ -113,4 +120,4 @@ impl<T: DeserializeOwned + Send> Page for FeedPage<T> {
 /// Represents a stream of pages from a Cosmos DB feed.
 ///
 /// See [`FeedPage`] for more details on Cosmos DB feeds.
-pub type FeedPager<T> = ItemIterator<FeedPage<T>>;
+pub type FeedPager<T> = ItemIterator<FeedPage<T>, String>;

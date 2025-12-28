@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation. All Rights reserved
 // Licensed under the MIT license.
 
-use crate::{common::recoverable::RecoverableConnection, models::ReceivedEventData};
+use crate::{common::recoverable::RecoverableConnection, error::Result, models::ReceivedEventData};
 use async_stream::try_stream;
-use azure_core::{error::Result, http::Url, time::Duration};
+use azure_core::{http::Url, time::Duration};
 use azure_core_amqp::{
     AmqpDeliveryApis as _, AmqpReceiverApis as _, AmqpReceiverOptions, AmqpSource,
 };
@@ -19,7 +19,7 @@ use tracing::trace;
 ///
 /// ```no_run
 /// use azure_messaging_eventhubs::ConsumerClient;
-/// use azure_identity::{DeveloperToolsCredential, TokenCredentialOptions};
+/// use azure_identity::DeveloperToolsCredential;
 /// use futures::stream::StreamExt;
 ///
 /// #[tokio::main]
@@ -117,7 +117,7 @@ impl EventReceiver {
     ///
     /// ```
     ///
-    pub fn stream_events(&self) -> impl Stream<Item = azure_core::Result<ReceivedEventData>> + '_ {
+    pub fn stream_events(&self) -> impl Stream<Item = Result<ReceivedEventData>> + '_ {
         // Use async_stream to create a stream that yields messages from the receiver.
         Box::pin(try_stream! {
             loop {
@@ -142,5 +142,11 @@ impl EventReceiver {
     /// Closes the event receiver, detaching from the remote.
     pub async fn close(self) -> Result<()> {
         self.connection.close_receiver(&self.source_url).await
+    }
+}
+
+impl Drop for EventReceiver {
+    fn drop(&mut self) {
+        trace!("Dropping EventReceiver for partition {}", self.partition_id);
     }
 }

@@ -7,8 +7,11 @@ use azure_core::{http::StatusCode, Result};
 use azure_core_test::{recorded, TestContext, TestMode};
 use azure_security_keyvault_keys::{
     models::{
-        CreateKeyParameters, CurveName, EncryptionAlgorithm, KeyOperationParameters, KeyType,
-        SignParameters, SignatureAlgorithm, UpdateKeyPropertiesParameters, VerifyParameters,
+        CreateKeyParameters, CurveName, EncryptionAlgorithm, KeyClientDecryptOptions,
+        KeyClientEncryptOptions, KeyClientGetKeyOptions, KeyClientSignOptions,
+        KeyClientUnwrapKeyOptions, KeyClientVerifyOptions, KeyClientWrapKeyOptions,
+        KeyOperationParameters, KeyType, SignParameters, SignatureAlgorithm,
+        UpdateKeyPropertiesParameters, VerifyParameters,
     },
     KeyClient, KeyClientOptions, ResourceExt as _,
 };
@@ -31,24 +34,28 @@ async fn key_roundtrip(ctx: TestContext) -> Result<()> {
 
     // Create an RSA key.
     let body = CreateKeyParameters {
-        kty: Some(KeyType::RSA),
+        kty: Some(KeyType::Rsa),
         key_size: Some(2048),
         ..Default::default()
     };
     let key = client
         .create_key("key-roundtrip", body.try_into()?, None)
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert!(matches!(key.key, Some(ref jwk) if jwk.e == Some(vec![1, 0, 1])));
 
     // Get a specific version of a key.
-    let version = key.resource_id()?.version.unwrap_or_default();
+    let key_version = key.resource_id()?.version;
     let key = client
-        .get_key("key-roundtrip", version.as_ref(), None)
+        .get_key(
+            "key-roundtrip",
+            Some(KeyClientGetKeyOptions {
+                key_version,
+                ..Default::default()
+            }),
+        )
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert!(matches!(key.key, Some(ref jwk) if jwk.e == Some(vec![1, 0, 1])));
 
     Ok(())
@@ -69,15 +76,14 @@ async fn update_key_properties(ctx: TestContext) -> Result<()> {
 
     // Create an EC key.
     let body = CreateKeyParameters {
-        kty: Some(KeyType::EC),
+        kty: Some(KeyType::Ec),
         curve: Some(CurveName::P256),
         ..Default::default()
     };
     let key = client
         .create_key("update-key", body.try_into()?, None)
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert!(matches!(key.key, Some(ref jwk) if jwk.x.is_some()));
 
     // Update key properties.
@@ -85,18 +91,17 @@ async fn update_key_properties(ctx: TestContext) -> Result<()> {
         key_attributes: key.attributes,
         tags: Some(HashMap::from_iter(vec![(
             "test-name".into(),
-            "update_key_properties".into(),
+            "update_key".into(),
         )])),
         ..Default::default()
     };
     let key = client
-        .update_key_properties("update-key", "", properties.try_into()?, None)
+        .update_key_properties("update-key", properties.try_into()?, None)
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert_eq!(
         key.tags.expect("expected tags").get("test-name"),
-        Some(&String::from("update_key_properties"))
+        Some(&String::from("update_key"))
     );
 
     Ok(())
@@ -104,6 +109,8 @@ async fn update_key_properties(ctx: TestContext) -> Result<()> {
 
 #[recorded::test]
 async fn list_keys(ctx: TestContext) -> Result<()> {
+    use azure_core::http::RequestContent;
+
     let recording = ctx.recording();
 
     let mut options = KeyClientOptions::default();
@@ -120,23 +127,21 @@ async fn list_keys(ctx: TestContext) -> Result<()> {
     let secret1 = client
         .create_key(
             names[0],
-            r#"{"kty":"EC","curve":"P-384"}"#.try_into()?,
+            RequestContent::from_str(r#"{"kty":"EC","curve":"P-384"}"#),
             None,
         )
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert!(matches!(secret1.key, Some(ref jwk) if jwk.x.is_some()));
 
     let secret2 = client
         .create_key(
             names[1],
-            r#"{"kty":"EC","curve":"P-384"}"#.try_into()?,
+            RequestContent::from_str(r#"{"kty":"EC","curve":"P-384"}"#),
             None,
         )
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert!(matches!(secret2.key, Some(ref jwk) if jwk.x.is_some()));
 
     // List keys.
@@ -168,15 +173,14 @@ async fn purge_key(ctx: TestContext) -> Result<()> {
 
     // Create an RSA key.
     let body = CreateKeyParameters {
-        kty: Some(KeyType::RSA),
+        kty: Some(KeyType::Rsa),
         key_size: Some(2048),
         ..Default::default()
     };
     let key = client
         .create_key("purge-key", body.try_into()?, None)
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert!(matches!(key.key, Some(ref jwk) if jwk.e == Some(vec![1, 0, 1])));
 
     // Delete the key.
@@ -192,11 +196,11 @@ async fn purge_key(ctx: TestContext) -> Result<()> {
     loop {
         match client.purge_deleted_key(name.as_ref(), None).await {
             Ok(_) => {
-                println!("{name} has been purged");
+                tracing::debug!("{name} has been purged");
                 break;
             }
             Err(err) if matches!(err.http_status(), Some(StatusCode::Conflict)) => {
-                println!(
+                tracing::debug!(
                     "Retrying in {} seconds",
                     retry.duration().unwrap_or_default().as_secs_f32()
                 );
@@ -226,7 +230,7 @@ async fn encrypt_decrypt(ctx: TestContext) -> Result<()> {
 
     // Create an RSA key.
     let body = CreateKeyParameters {
-        kty: Some(KeyType::RSA),
+        kty: Some(KeyType::Rsa),
         key_size: Some(2048),
         ..Default::default()
     };
@@ -236,31 +240,42 @@ async fn encrypt_decrypt(ctx: TestContext) -> Result<()> {
     let key = client
         .create_key(NAME, body.try_into()?, None)
         .await?
-        .into_body()
-        .await?;
-    let version = key.resource_id()?.version.unwrap_or_default();
+        .into_model()?;
+    let key_version = key.resource_id()?.version;
 
     // Encrypt plaintext.
     let plaintext = b"plaintext".to_vec();
     let mut parameters = KeyOperationParameters {
-        algorithm: Some(EncryptionAlgorithm::RsaOAEP256),
+        algorithm: Some(EncryptionAlgorithm::RsaOaep256),
         value: Some(plaintext.clone()),
         ..Default::default()
     };
     let encrypted = client
-        .encrypt(NAME, version.as_ref(), parameters.clone().try_into()?, None)
+        .encrypt(
+            NAME,
+            parameters.clone().try_into()?,
+            Some(KeyClientEncryptOptions {
+                key_version: key_version.clone(),
+                ..Default::default()
+            }),
+        )
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert!(matches!(encrypted.result.as_ref(), Some(ciphertext) if !ciphertext.is_empty()));
 
     // Decrypt ciphertext.
     parameters.value = encrypted.result;
     let decrypted = client
-        .decrypt(NAME, version.as_ref(), parameters.try_into()?, None)
+        .decrypt(
+            NAME,
+            parameters.try_into()?,
+            Some(KeyClientDecryptOptions {
+                key_version,
+                ..Default::default()
+            }),
+        )
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert!(matches!(decrypted.result, Some(result) if result.eq(&plaintext)));
 
     Ok(())
@@ -283,20 +298,19 @@ async fn sign_verify(ctx: TestContext) -> Result<()> {
 
     // Create an EC key.
     let body = CreateKeyParameters {
-        kty: Some(KeyType::EC),
+        kty: Some(KeyType::Ec),
         curve: Some(CurveName::P256),
         ..Default::default()
     };
 
     const NAME: &str = "sign-verify";
-    const ALG: Option<SignatureAlgorithm> = Some(SignatureAlgorithm::ES256);
+    const ALG: Option<SignatureAlgorithm> = Some(SignatureAlgorithm::Es256);
 
     let key = client
         .create_key(NAME, body.try_into()?, None)
         .await?
-        .into_body()
-        .await?;
-    let version = key.resource_id()?.version.unwrap_or_default();
+        .into_model()?;
+    let key_version = key.resource_id()?.version;
 
     // Hash and sign plaintext.
     let plaintext = b"plaintext".to_vec();
@@ -307,10 +321,16 @@ async fn sign_verify(ctx: TestContext) -> Result<()> {
         value: Some(digest.clone()),
     };
     let signed = client
-        .sign(NAME, version.as_ref(), parameters.try_into()?, None)
+        .sign(
+            NAME,
+            parameters.try_into()?,
+            Some(KeyClientSignOptions {
+                key_version: key_version.clone(),
+                ..Default::default()
+            }),
+        )
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert!(matches!(signed.result.as_ref(), Some(signature) if !signature.is_empty()));
 
     // Verify signature.
@@ -320,10 +340,16 @@ async fn sign_verify(ctx: TestContext) -> Result<()> {
         signature: signed.result,
     };
     let verified = client
-        .verify(NAME, version.as_ref(), parameters.try_into()?, None)
+        .verify(
+            NAME,
+            parameters.try_into()?,
+            Some(KeyClientVerifyOptions {
+                key_version,
+                ..Default::default()
+            }),
+        )
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert_eq!(verified.value, Some(true));
 
     Ok(())
@@ -344,20 +370,19 @@ async fn wrap_key_unwrap_key(ctx: TestContext) -> Result<()> {
 
     // Create a KEK using RSA.
     let body = CreateKeyParameters {
-        kty: Some(KeyType::RSA),
+        kty: Some(KeyType::Rsa),
         key_size: Some(2048),
         ..Default::default()
     };
 
     const NAME: &str = "wrap-key-unwrap-key";
-    const ALG: Option<EncryptionAlgorithm> = Some(EncryptionAlgorithm::RsaOAEP256);
+    const ALG: Option<EncryptionAlgorithm> = Some(EncryptionAlgorithm::RsaOaep256);
 
     let key = client
         .create_key(NAME, body.try_into()?, None)
         .await?
-        .into_body()
-        .await?;
-    let version = key.resource_id()?.version.unwrap_or_default();
+        .into_model()?;
+    let key_version = key.resource_id()?.version;
 
     // Generate a data encryption key.
     let dek = recording.random::<[u8; 32]>().to_vec();
@@ -369,19 +394,31 @@ async fn wrap_key_unwrap_key(ctx: TestContext) -> Result<()> {
         ..Default::default()
     };
     let wrapped = client
-        .wrap_key(NAME, version.as_ref(), parameters.clone().try_into()?, None)
+        .wrap_key(
+            NAME,
+            parameters.clone().try_into()?,
+            Some(KeyClientWrapKeyOptions {
+                key_version: key_version.clone(),
+                ..Default::default()
+            }),
+        )
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert!(matches!(wrapped.result.as_ref(), Some(result) if !result.is_empty()));
 
     // Unwrap the DEK.
     parameters.value = wrapped.result;
     let unwrapped = client
-        .unwrap_key(NAME, version.as_ref(), parameters.try_into()?, None)
+        .unwrap_key(
+            NAME,
+            parameters.try_into()?,
+            Some(KeyClientUnwrapKeyOptions {
+                key_version,
+                ..Default::default()
+            }),
+        )
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert!(matches!(unwrapped.result, Some(result) if result.eq(&dek)));
 
     Ok(())

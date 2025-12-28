@@ -7,7 +7,7 @@ use crate::{
     tracing::{Span, SpanKind, Tracer},
 };
 use ::tracing::trace;
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 use typespec_client_core::{
     fmt::SafeDebug,
     http::policies::{Policy, PolicyResult},
@@ -34,7 +34,7 @@ pub struct PublicApiInstrumentationInformation {
     /// For example, if the service client is `MyClient` and the API is `my_api`,
     /// the API name should be `MyClient.my_api`.
     #[safe(true)]
-    pub api_name: &'static str,
+    api_name: Cow<'static, str>,
 
     /// Additional attributes to be added to the span for this API.
     ///
@@ -42,7 +42,25 @@ pub struct PublicApiInstrumentationInformation {
     /// See [Library-specific attributes](https://github.com/Azure/azure-sdk/blob/main/docs/tracing/distributed-tracing-conventions.md#library-specific-attributes)
     /// for more information.
     ///
-    pub attributes: Vec<Attribute>,
+    attributes: Vec<Attribute>,
+}
+
+impl PublicApiInstrumentationInformation {
+    /// Creates a new `PublicApiInstrumentationInformation`.
+    ///
+    /// # Arguments
+    /// - `api_name`: The name of the API being instrumented.
+    /// - `attributes`: Additional attributes to be added to the span for this API.
+    ///
+    /// # Returns
+    /// A new instance of `PublicApiInstrumentationInformation`.
+    ///
+    pub fn new(api_name: impl Into<Cow<'static, str>>, attributes: Vec<Attribute>) -> Self {
+        Self {
+            api_name: api_name.into(),
+            attributes,
+        }
+    }
 }
 
 /// Sets distributed tracing information for HTTP requests.
@@ -215,10 +233,10 @@ mod tests {
         http::{
             headers::Headers,
             policies::{create_public_api_span, RequestInstrumentationPolicy, TransportPolicy},
-            Method, RawResponse, StatusCode, TransportOptions,
+            AsyncRawResponse, Method, StatusCode, Transport,
         },
         tracing::{SpanStatus, TracerProvider},
-        Result,
+        Result, Uuid,
     };
     use azure_core_test::{
         http::MockHttpClient,
@@ -239,7 +257,7 @@ mod tests {
         callback: C,
     ) -> Arc<MockTracingProvider>
     where
-        C: FnMut(&Request) -> BoxFuture<'_, Result<RawResponse>> + Send + Sync + 'static,
+        C: FnMut(&Request) -> BoxFuture<'_, Result<AsyncRawResponse>> + Send + Sync + 'static,
     {
         // Add the public API information and tracer to the context so that it can be used by the policy.
         let mock_tracer_provider = Arc::new(MockTracingProvider::new());
@@ -259,9 +277,8 @@ mod tests {
             Arc::new(PublicApiInstrumentationPolicy::new(policy_tracer))
         };
 
-        let transport = TransportPolicy::new(TransportOptions::new(Arc::new(MockHttpClient::new(
-            callback,
-        ))));
+        let transport =
+            TransportPolicy::new(Transport::new(Arc::new(MockHttpClient::new(callback))));
 
         let next: Vec<Arc<dyn Policy>> = vec![Arc::new(transport)];
 
@@ -291,7 +308,7 @@ mod tests {
         callback: C,
     ) -> Arc<MockTracingProvider>
     where
-        C: FnMut(&Request) -> BoxFuture<'_, Result<RawResponse>> + Send + Sync + 'static,
+        C: FnMut(&Request) -> BoxFuture<'_, Result<AsyncRawResponse>> + Send + Sync + 'static,
     {
         let mock_tracer_provider = Arc::new(MockTracingProvider::new());
         let mock_tracer =
@@ -301,9 +318,8 @@ mod tests {
             mock_tracer.clone(),
         )));
 
-        let transport = TransportPolicy::new(TransportOptions::new(Arc::new(MockHttpClient::new(
-            callback,
-        ))));
+        let transport =
+            TransportPolicy::new(Transport::new(Arc::new(MockHttpClient::new(callback))));
 
         let request_instrumentation_policy =
             RequestInstrumentationPolicy::new(Some(mock_tracer.clone()));
@@ -312,13 +328,13 @@ mod tests {
             Arc::new(request_instrumentation_policy),
             Arc::new(transport),
         ];
-        let public_api_information = PublicApiInstrumentationInformation {
-            api_name: api_name.unwrap_or("unknown"),
-            attributes: vec![Attribute {
+        let public_api_information = PublicApiInstrumentationInformation::new(
+            api_name.unwrap_or("unknown"),
+            vec![Attribute {
                 key: "az.fake_attribute".into(),
                 value: "attribute value".into(),
             }],
-        };
+        );
 
         // Add the public API information and tracer to the context so that it can be used by the policy.
         let ctx = Context::default()
@@ -349,7 +365,7 @@ mod tests {
         let tracer =
             Arc::new(MockTracingProvider::new()).get_tracer(Some("test"), "test", Some("1.0.0"));
         {
-            let existing_span = tracer.start_span("existing", SpanKind::Internal, vec![]);
+            let existing_span = tracer.start_span("existing".into(), SpanKind::Internal, vec![]);
             let ctx = Context::default().with_value(existing_span.clone());
             let span = create_public_api_span(&ctx, Some(tracer.clone()), None);
             assert!(
@@ -371,10 +387,10 @@ mod tests {
             let span = create_public_api_span(
                 &ctx,
                 Some(tracer.clone()),
-                Some(PublicApiInstrumentationInformation {
-                    api_name: "TestClient.test_api",
-                    attributes: vec![],
-                }),
+                Some(PublicApiInstrumentationInformation::new(
+                    "TestClient.test_api",
+                    vec![],
+                )),
             );
             assert!(
                 span.is_some(),
@@ -387,10 +403,7 @@ mod tests {
     #[test]
     fn create_public_api_span_tests_public_api_info_no_tracer() {
         {
-            let api_info = PublicApiInstrumentationInformation {
-                api_name: "TestClient.test_api",
-                attributes: vec![],
-            };
+            let api_info = PublicApiInstrumentationInformation::new("TestClient.test_api", vec![]);
             let ctx = Context::default().with_value(api_info);
             let span = create_public_api_span(&ctx, None, None);
             assert!(
@@ -405,10 +418,7 @@ mod tests {
         let tracer =
             Arc::new(MockTracingProvider::new()).get_tracer(Some("test"), "test", Some("1.0.0"));
         {
-            let api_info = PublicApiInstrumentationInformation {
-                api_name: "TestClient.test_api",
-                attributes: vec![],
-            };
+            let api_info = PublicApiInstrumentationInformation::new("TestClient.test_api", vec![]);
             let ctx = Context::default()
                 .with_value(api_info)
                 .with_value(tracer.clone());
@@ -425,13 +435,13 @@ mod tests {
         let tracer =
             Arc::new(MockTracingProvider::new()).get_tracer(Some("test"), "test", Some("1.0.0"));
         {
-            let api_info = PublicApiInstrumentationInformation {
-                api_name: "TestClient.test_api",
-                attributes: vec![Attribute {
+            let api_info = PublicApiInstrumentationInformation::new(
+                "TestClient.test_api",
+                vec![Attribute {
                     key: "test.attribute".into(),
                     value: "test_value".into(),
                 }],
-            };
+            );
             let ctx = Context::default().with_value(api_info);
             let span = create_public_api_span(&ctx, Some(tracer.clone()), None);
             assert!(span.is_some(), "Should create span with attributes");
@@ -452,7 +462,7 @@ mod tests {
                 Box::pin(async move {
                     assert_eq!(req.url().host_str(), Some("example.com"));
                     assert_eq!(req.method(), Method::Get);
-                    Ok(RawResponse::from_bytes(
+                    Ok(AsyncRawResponse::from_bytes(
                         StatusCode::Ok,
                         Headers::new(),
                         vec![],
@@ -479,10 +489,10 @@ mod tests {
         let mut request = Request::new(url.parse().unwrap(), Method::Get);
 
         let mock_tracer = run_public_api_instrumentation_test(
-            Some(PublicApiInstrumentationInformation {
-                api_name: "MyClient.MyApi",
-                attributes: vec![],
-            }),
+            Some(PublicApiInstrumentationInformation::new(
+                "MyClient.MyApi",
+                vec![],
+            )),
             false, // Create tracer.
             false, // Add tracer to context.
             &mut request,
@@ -490,7 +500,7 @@ mod tests {
                 Box::pin(async move {
                     assert_eq!(req.url().host_str(), Some("example.com"));
                     assert_eq!(req.method(), Method::Get);
-                    Ok(RawResponse::from_bytes(
+                    Ok(AsyncRawResponse::from_bytes(
                         StatusCode::Ok,
                         Headers::new(),
                         vec![],
@@ -510,10 +520,10 @@ mod tests {
         let mut request = Request::new(url.parse().unwrap(), Method::Get);
 
         let mock_tracer = run_public_api_instrumentation_test(
-            Some(PublicApiInstrumentationInformation {
-                api_name: "MyClient.MyApi",
-                attributes: vec![],
-            }),
+            Some(PublicApiInstrumentationInformation::new(
+                "MyClient.MyApi",
+                vec![],
+            )),
             true,  // Create tracer.
             false, // Add tracer to context.
             &mut request,
@@ -521,7 +531,7 @@ mod tests {
                 Box::pin(async move {
                     assert_eq!(req.url().host_str(), Some("example.com"));
                     assert_eq!(req.method(), Method::Get);
-                    Ok(RawResponse::from_bytes(
+                    Ok(AsyncRawResponse::from_bytes(
                         StatusCode::Ok,
                         Headers::new(),
                         vec![],
@@ -541,7 +551,8 @@ mod tests {
                     span_name: "MyClient.MyApi",
                     status: SpanStatus::Unset,
                     kind: SpanKind::Internal,
-                    attributes: vec![],
+                    span_id: Uuid::new_v4(),
+                    ..Default::default()
                 }],
             }],
         )
@@ -553,10 +564,10 @@ mod tests {
         let mut request = Request::new(url.parse().unwrap(), Method::Get);
 
         let mock_tracer = run_public_api_instrumentation_test(
-            Some(PublicApiInstrumentationInformation {
-                api_name: "MyClient.MyApi",
-                attributes: vec![],
-            }),
+            Some(PublicApiInstrumentationInformation::new(
+                "MyClient.MyApi",
+                vec![],
+            )),
             true, // Create tracer.
             true,
             &mut request,
@@ -564,7 +575,7 @@ mod tests {
                 Box::pin(async move {
                     assert_eq!(req.url().host_str(), Some("example.com"));
                     assert_eq!(req.method(), Method::Get);
-                    Ok(RawResponse::from_bytes(
+                    Ok(AsyncRawResponse::from_bytes(
                         StatusCode::Ok,
                         Headers::new(),
                         vec![],
@@ -583,8 +594,10 @@ mod tests {
                 spans: vec![ExpectedSpanInformation {
                     span_name: "MyClient.MyApi",
                     status: SpanStatus::Unset,
+                    span_id: Uuid::new_v4(),
                     kind: SpanKind::Internal,
                     attributes: vec![(AZ_NAMESPACE_ATTRIBUTE, "test namespace".into())],
+                    ..Default::default()
                 }],
             }],
         );
@@ -596,10 +609,10 @@ mod tests {
         let mut request = Request::new(url.parse().unwrap(), Method::Get);
 
         let mock_tracer = run_public_api_instrumentation_test(
-            Some(PublicApiInstrumentationInformation {
-                api_name: "MyClient.MyApi",
-                attributes: vec![],
-            }),
+            Some(PublicApiInstrumentationInformation::new(
+                "MyClient.MyApi",
+                vec![],
+            )),
             true,
             true,
             &mut request,
@@ -607,7 +620,7 @@ mod tests {
                 Box::pin(async move {
                     assert_eq!(req.url().host_str(), Some("example.com"));
                     assert_eq!(req.method(), Method::Get);
-                    Ok(RawResponse::from_bytes(
+                    Ok(AsyncRawResponse::from_bytes(
                         StatusCode::InternalServerError,
                         Headers::new(),
                         vec![],
@@ -629,10 +642,13 @@ mod tests {
                         description: "".to_string(),
                     },
                     kind: SpanKind::Internal,
+                    span_id: Uuid::new_v4(),
+                    parent_id: None,
                     attributes: vec![
                         (AZ_NAMESPACE_ATTRIBUTE, "test namespace".into()),
                         (ERROR_TYPE_ATTRIBUTE, "500".into()),
                     ],
+                    ..Default::default()
                 }],
             }],
         );
@@ -653,7 +669,7 @@ mod tests {
                 Box::pin(async move {
                     assert_eq!(req.url().host_str(), Some("example.com"));
                     assert_eq!(req.method(), Method::Put);
-                    Ok(RawResponse::from_bytes(
+                    Ok(AsyncRawResponse::from_bytes(
                         StatusCode::Ok,
                         Headers::new(),
                         vec![],
@@ -662,6 +678,8 @@ mod tests {
             },
         )
         .await;
+
+        let parent_id = Uuid::new_v4();
 
         check_instrumentation_result(
             mock_tracer.clone(),
@@ -674,15 +692,20 @@ mod tests {
                         span_name: "MyClient.MyApi",
                         status: SpanStatus::Unset,
                         kind: SpanKind::Internal,
+                        span_id: parent_id,
+                        parent_id: None,
                         attributes: vec![
                             (AZ_NAMESPACE_ATTRIBUTE, "test.namespace".into()),
                             ("az.fake_attribute", "attribute value".into()),
                         ],
+                        ..Default::default()
                     },
                     ExpectedSpanInformation {
                         span_name: "PUT",
                         status: SpanStatus::Unset,
                         kind: SpanKind::Client,
+                        span_id: Uuid::new_v4(),
+                        parent_id: Some(parent_id),
                         attributes: vec![
                             (AZ_NAMESPACE_ATTRIBUTE, "test.namespace".into()),
                             ("http.request.method", "PUT".into()),
@@ -691,6 +714,7 @@ mod tests {
                             ("server.port", 80.into()),
                             ("http.response.status_code", 200.into()),
                         ],
+                        ..Default::default()
                     },
                 ],
             }],

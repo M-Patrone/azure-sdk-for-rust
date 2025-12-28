@@ -5,13 +5,12 @@
 
 use crate::generated::models::{
     BackupCertificateResult, Certificate, CertificateClientBackupCertificateOptions,
-    CertificateClientCreateCertificateOptions, CertificateClientDeleteCertificateOperationOptions,
-    CertificateClientDeleteCertificateOptions, CertificateClientDeleteContactsOptions,
-    CertificateClientDeleteIssuerOptions, CertificateClientGetCertificateOperationOptions,
-    CertificateClientGetCertificateOptions, CertificateClientGetCertificatePolicyOptions,
-    CertificateClientGetContactsOptions, CertificateClientGetDeletedCertificateOptions,
-    CertificateClientGetIssuerOptions, CertificateClientImportCertificateOptions,
-    CertificateClientListCertificatePropertiesOptions,
+    CertificateClientDeleteCertificateOperationOptions, CertificateClientDeleteCertificateOptions,
+    CertificateClientDeleteContactsOptions, CertificateClientDeleteIssuerOptions,
+    CertificateClientGetCertificateOperationOptions, CertificateClientGetCertificateOptions,
+    CertificateClientGetCertificatePolicyOptions, CertificateClientGetContactsOptions,
+    CertificateClientGetDeletedCertificateOptions, CertificateClientGetIssuerOptions,
+    CertificateClientImportCertificateOptions, CertificateClientListCertificatePropertiesOptions,
     CertificateClientListCertificatePropertiesVersionsOptions,
     CertificateClientListDeletedCertificatePropertiesOptions,
     CertificateClientListIssuerPropertiesOptions, CertificateClientMergeCertificateOptions,
@@ -21,22 +20,23 @@ use crate::generated::models::{
     CertificateClientUpdateCertificateOperationOptions,
     CertificateClientUpdateCertificatePolicyOptions,
     CertificateClientUpdateCertificatePropertiesOptions, CertificateClientUpdateIssuerOptions,
-    CertificateOperation, CertificatePolicy, Contacts, CreateCertificateParameters,
-    DeletedCertificate, ImportCertificateParameters, Issuer, ListCertificatePropertiesResult,
+    CertificateOperation, CertificatePolicy, Contacts, DeletedCertificate,
+    ImportCertificateParameters, Issuer, ListCertificatePropertiesResult,
     ListDeletedCertificatePropertiesResult, ListIssuerPropertiesResult, MergeCertificateParameters,
     RestoreCertificateParameters, SetIssuerParameters, UpdateCertificateOperationParameter,
     UpdateCertificatePropertiesParameters, UpdateIssuerParameters,
 };
 use azure_core::{
     credentials::TokenCredential,
-    error::{ErrorKind, HttpError},
+    error::CheckSuccessOptions,
     fmt::SafeDebug,
     http::{
-        policies::{BearerTokenCredentialPolicy, Policy},
-        ClientOptions, Context, Method, NoFormat, Pager, PagerResult, PagerState, Pipeline,
-        RawResponse, Request, RequestContent, Response, Url,
+        pager::{PagerResult, PagerState},
+        policies::{auth::BearerTokenAuthorizationPolicy, Policy},
+        ClientOptions, Method, NoFormat, Pager, Pipeline, PipelineSendOptions, RawResponse,
+        Request, RequestContent, Response, Url, UrlExt,
     },
-    json, tracing, Error, Result,
+    json, tracing, Result,
 };
 use std::sync::Arc;
 
@@ -66,22 +66,21 @@ impl CertificateClient {
     /// * `credential` - An implementation of [`TokenCredential`](azure_core::credentials::TokenCredential) that can provide an
     ///   Entra ID token to use when authenticating.
     /// * `options` - Optional configuration for the client.
-    #[tracing::new("azure_security_keyvault_certificates")]
+    #[tracing::new("KeyVault")]
     pub fn new(
         endpoint: &str,
         credential: Arc<dyn TokenCredential>,
         options: Option<CertificateClientOptions>,
     ) -> Result<Self> {
         let options = options.unwrap_or_default();
-        let mut endpoint = Url::parse(endpoint)?;
+        let endpoint = Url::parse(endpoint)?;
         if !endpoint.scheme().starts_with("http") {
-            return Err(azure_core::Error::message(
+            return Err(azure_core::Error::with_message(
                 azure_core::error::ErrorKind::Other,
                 format!("{endpoint} must use http(s)"),
             ));
         }
-        endpoint.set_query(None);
-        let auth_policy: Arc<dyn Policy> = Arc::new(BearerTokenCredentialPolicy::new(
+        let auth_policy: Arc<dyn Policy> = Arc::new(BearerTokenAuthorizationPolicy::new(
             credential,
             vec!["https://vault.azure.net/.default"],
         ));
@@ -94,6 +93,7 @@ impl CertificateClient {
                 options.client_options,
                 Vec::default(),
                 vec![auth_policy],
+                None,
             ),
         })
     }
@@ -118,68 +118,36 @@ impl CertificateClient {
         certificate_name: &str,
         options: Option<CertificateClientBackupCertificateOptions<'_>>,
     ) -> Result<Response<BackupCertificateResult>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}/backup");
+        let mut path = String::from("/certificates/{certificate-name}/backup");
         path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Post);
         request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
-        Ok(rsp.into())
-    }
-
-    /// Creates a new certificate.
-    ///
-    /// If this is the first version, the certificate resource is created. This operation requires the certificates/create permission.
-    ///
-    /// # Arguments
-    ///
-    /// * `certificate_name` - The name of the certificate. The value you provide may be copied globally for the purpose of running
-    ///   the service. The value provided should not include personally identifiable or sensitive information.
-    /// * `parameters` - The parameters to create a certificate.
-    /// * `options` - Optional parameters for the request.
-    #[tracing::function("KeyVault.createCertificate")]
-    pub async fn create_certificate(
-        &self,
-        certificate_name: &str,
-        parameters: RequestContent<CreateCertificateParameters>,
-        options: Option<CertificateClientCreateCertificateOptions<'_>>,
-    ) -> Result<Response<CertificateOperation>> {
-        let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
-        let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}/create");
-        path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
-        let mut request = Request::new(url, Method::Post);
-        request.insert_header("accept", "application/json");
-        request.insert_header("content-type", "application/json");
-        request.set_body(parameters);
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -198,26 +166,36 @@ impl CertificateClient {
         certificate_name: &str,
         options: Option<CertificateClientDeleteCertificateOptions<'_>>,
     ) -> Result<Response<DeletedCertificate>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}");
+        let mut path = String::from("/certificates/{certificate-name}");
         path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Delete);
         request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -236,26 +214,36 @@ impl CertificateClient {
         certificate_name: &str,
         options: Option<CertificateClientDeleteCertificateOperationOptions<'_>>,
     ) -> Result<Response<CertificateOperation>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}/pending");
+        let mut path = String::from("/certificates/{certificate-name}/pending");
         path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Delete);
         request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -273,23 +261,27 @@ impl CertificateClient {
         options: Option<CertificateClientDeleteContactsOptions<'_>>,
     ) -> Result<Response<Contacts>> {
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        url = url.join("certificates/contacts")?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path("/certificates/contacts");
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Delete);
         request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -308,26 +300,36 @@ impl CertificateClient {
         issuer_name: &str,
         options: Option<CertificateClientDeleteIssuerOptions<'_>>,
     ) -> Result<Response<Issuer>> {
+        if issuer_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter issuer_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/issuers/{issuer-name}");
+        let mut path = String::from("/certificates/issuers/{issuer-name}");
         path = path.replace("{issuer-name}", issuer_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Delete);
         request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -338,37 +340,47 @@ impl CertificateClient {
     /// # Arguments
     ///
     /// * `certificate_name` - The name of the certificate in the given vault.
-    /// * `certificate_version` - The version of the certificate. This URI fragment is optional. If not specified, the latest
-    ///   version of the certificate is returned.
     /// * `options` - Optional parameters for the request.
     #[tracing::function("KeyVault.getCertificate")]
     pub async fn get_certificate(
         &self,
         certificate_name: &str,
-        certificate_version: &str,
         options: Option<CertificateClientGetCertificateOptions<'_>>,
     ) -> Result<Response<Certificate>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}/{certificate-version}");
+        let mut path = String::from("/certificates/{certificate-name}/{certificate-version}");
         path = path.replace("{certificate-name}", certificate_name);
-        path = path.replace("{certificate-version}", certificate_version);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        path = match options.certificate_version.as_ref() {
+            Some(certificate_version) => path.replace("{certificate-version}", certificate_version),
+            None => path.replace("{certificate-version}", ""),
+        };
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Get);
         request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -386,26 +398,36 @@ impl CertificateClient {
         certificate_name: &str,
         options: Option<CertificateClientGetCertificateOperationOptions<'_>>,
     ) -> Result<Response<CertificateOperation>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}/pending");
+        let mut path = String::from("/certificates/{certificate-name}/pending");
         path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Get);
         request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -424,26 +446,36 @@ impl CertificateClient {
         certificate_name: &str,
         options: Option<CertificateClientGetCertificatePolicyOptions<'_>>,
     ) -> Result<Response<CertificatePolicy>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}/policy");
+        let mut path = String::from("/certificates/{certificate-name}/policy");
         path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Get);
         request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -461,23 +493,27 @@ impl CertificateClient {
         options: Option<CertificateClientGetContactsOptions<'_>>,
     ) -> Result<Response<Contacts>> {
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        url = url.join("certificates/contacts")?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path("/certificates/contacts");
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Get);
         request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -497,26 +533,36 @@ impl CertificateClient {
         certificate_name: &str,
         options: Option<CertificateClientGetDeletedCertificateOptions<'_>>,
     ) -> Result<Response<DeletedCertificate>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("deletedcertificates/{certificate-name}");
+        let mut path = String::from("/deletedcertificates/{certificate-name}");
         path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Get);
         request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -535,26 +581,36 @@ impl CertificateClient {
         issuer_name: &str,
         options: Option<CertificateClientGetIssuerOptions<'_>>,
     ) -> Result<Response<Issuer>> {
+        if issuer_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter issuer_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/issuers/{issuer-name}");
+        let mut path = String::from("/certificates/issuers/{issuer-name}");
         path = path.replace("{issuer-name}", issuer_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Get);
         request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -577,28 +633,38 @@ impl CertificateClient {
         parameters: RequestContent<ImportCertificateParameters>,
         options: Option<CertificateClientImportCertificateOptions<'_>>,
     ) -> Result<Response<Certificate>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}/import");
+        let mut path = String::from("/certificates/{certificate-name}/import");
         path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Post);
         request.insert_header("accept", "application/json");
         request.insert_header("content-type", "application/json");
         request.set_body(parameters);
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -618,65 +684,59 @@ impl CertificateClient {
         let options = options.unwrap_or_default().into_owned();
         let pipeline = self.pipeline.clone();
         let mut first_url = self.endpoint.clone();
-        first_url = first_url.join("certificates")?;
-        first_url
-            .query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        first_url.append_path("/certificates");
+        let mut query_builder = first_url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
         if let Some(include_pending) = options.include_pending {
-            first_url
-                .query_pairs_mut()
-                .append_pair("includePending", &include_pending.to_string());
+            query_builder.set_pair("includePending", include_pending.to_string());
         }
         if let Some(maxresults) = options.maxresults {
-            first_url
-                .query_pairs_mut()
-                .append_pair("maxresults", &maxresults.to_string());
+            query_builder.set_pair("maxresults", maxresults.to_string());
         }
+        query_builder.build();
         let api_version = self.api_version.clone();
-        Ok(Pager::from_callback(move |next_link: PagerState<Url>| {
-            let url = match next_link {
-                PagerState::More(next_link) => {
-                    let qp = next_link
-                        .query_pairs()
-                        .filter(|(name, _)| name.ne("api-version"));
-                    let mut next_link = next_link.clone();
-                    next_link
-                        .query_pairs_mut()
-                        .clear()
-                        .extend_pairs(qp)
-                        .append_pair("api-version", &api_version);
-                    next_link
-                }
-                PagerState::Initial => first_url.clone(),
-            };
-            let mut request = Request::new(url, Method::Get);
-            request.insert_header("accept", "application/json");
-            let ctx = options.method_options.context.clone();
-            let pipeline = pipeline.clone();
-            async move {
-                let rsp: RawResponse = pipeline.send(&ctx, &mut request).await?;
-                if !rsp.status().is_success() {
-                    let status = rsp.status();
-                    let http_error = HttpError::new(rsp).await;
-                    let error_kind = ErrorKind::http_response(
-                        status,
-                        http_error.error_code().map(std::borrow::ToOwned::to_owned),
-                    );
-                    return Err(Error::new(error_kind, http_error));
-                }
-                let (status, headers, body) = rsp.deconstruct();
-                let bytes = body.collect().await?;
-                let res: ListCertificatePropertiesResult = json::from_json(&bytes)?;
-                let rsp = RawResponse::from_bytes(status, headers, bytes).into();
-                Ok(match res.next_link {
-                    Some(next_link) if !next_link.is_empty() => PagerResult::More {
-                        response: rsp,
-                        continuation: next_link.parse()?,
-                    },
-                    _ => PagerResult::Done { response: rsp },
+        Ok(Pager::new(
+            move |next_link: PagerState<Url>, pager_options| {
+                let url = match next_link {
+                    PagerState::More(next_link) => {
+                        let mut next_link = next_link.clone();
+                        let mut query_builder = next_link.query_builder();
+                        query_builder.set_pair("api-version", &api_version);
+                        query_builder.build();
+                        next_link
+                    }
+                    PagerState::Initial => first_url.clone(),
+                };
+                let mut request = Request::new(url, Method::Get);
+                request.insert_header("accept", "application/json");
+                let pipeline = pipeline.clone();
+                Box::pin(async move {
+                    let rsp = pipeline
+                        .send(
+                            &pager_options.context,
+                            &mut request,
+                            Some(PipelineSendOptions {
+                                check_success: CheckSuccessOptions {
+                                    success_codes: &[200],
+                                },
+                                ..Default::default()
+                            }),
+                        )
+                        .await?;
+                    let (status, headers, body) = rsp.deconstruct();
+                    let res: ListCertificatePropertiesResult = json::from_json(&body)?;
+                    let rsp = RawResponse::from_bytes(status, headers, body).into();
+                    Ok(match res.next_link {
+                        Some(next_link) if !next_link.is_empty() => PagerResult::More {
+                            response: rsp,
+                            continuation: next_link.parse()?,
+                        },
+                        _ => PagerResult::Done { response: rsp },
+                    })
                 })
-            }
-        }))
+            },
+            Some(options.method_options),
+        ))
     }
 
     /// List the versions of a certificate.
@@ -694,65 +754,67 @@ impl CertificateClient {
         certificate_name: &str,
         options: Option<CertificateClientListCertificatePropertiesVersionsOptions<'_>>,
     ) -> Result<Pager<ListCertificatePropertiesResult>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default().into_owned();
         let pipeline = self.pipeline.clone();
         let mut first_url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}/versions");
+        let mut path = String::from("/certificates/{certificate-name}/versions");
         path = path.replace("{certificate-name}", certificate_name);
-        first_url = first_url.join(&path)?;
-        first_url
-            .query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        first_url.append_path(&path);
+        let mut query_builder = first_url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
         if let Some(maxresults) = options.maxresults {
-            first_url
-                .query_pairs_mut()
-                .append_pair("maxresults", &maxresults.to_string());
+            query_builder.set_pair("maxresults", maxresults.to_string());
         }
+        query_builder.build();
         let api_version = self.api_version.clone();
-        Ok(Pager::from_callback(move |next_link: PagerState<Url>| {
-            let url = match next_link {
-                PagerState::More(next_link) => {
-                    let qp = next_link
-                        .query_pairs()
-                        .filter(|(name, _)| name.ne("api-version"));
-                    let mut next_link = next_link.clone();
-                    next_link
-                        .query_pairs_mut()
-                        .clear()
-                        .extend_pairs(qp)
-                        .append_pair("api-version", &api_version);
-                    next_link
-                }
-                PagerState::Initial => first_url.clone(),
-            };
-            let mut request = Request::new(url, Method::Get);
-            request.insert_header("accept", "application/json");
-            let ctx = options.method_options.context.clone();
-            let pipeline = pipeline.clone();
-            async move {
-                let rsp: RawResponse = pipeline.send(&ctx, &mut request).await?;
-                if !rsp.status().is_success() {
-                    let status = rsp.status();
-                    let http_error = HttpError::new(rsp).await;
-                    let error_kind = ErrorKind::http_response(
-                        status,
-                        http_error.error_code().map(std::borrow::ToOwned::to_owned),
-                    );
-                    return Err(Error::new(error_kind, http_error));
-                }
-                let (status, headers, body) = rsp.deconstruct();
-                let bytes = body.collect().await?;
-                let res: ListCertificatePropertiesResult = json::from_json(&bytes)?;
-                let rsp = RawResponse::from_bytes(status, headers, bytes).into();
-                Ok(match res.next_link {
-                    Some(next_link) if !next_link.is_empty() => PagerResult::More {
-                        response: rsp,
-                        continuation: next_link.parse()?,
-                    },
-                    _ => PagerResult::Done { response: rsp },
+        Ok(Pager::new(
+            move |next_link: PagerState<Url>, pager_options| {
+                let url = match next_link {
+                    PagerState::More(next_link) => {
+                        let mut next_link = next_link.clone();
+                        let mut query_builder = next_link.query_builder();
+                        query_builder.set_pair("api-version", &api_version);
+                        query_builder.build();
+                        next_link
+                    }
+                    PagerState::Initial => first_url.clone(),
+                };
+                let mut request = Request::new(url, Method::Get);
+                request.insert_header("accept", "application/json");
+                let pipeline = pipeline.clone();
+                Box::pin(async move {
+                    let rsp = pipeline
+                        .send(
+                            &pager_options.context,
+                            &mut request,
+                            Some(PipelineSendOptions {
+                                check_success: CheckSuccessOptions {
+                                    success_codes: &[200],
+                                },
+                                ..Default::default()
+                            }),
+                        )
+                        .await?;
+                    let (status, headers, body) = rsp.deconstruct();
+                    let res: ListCertificatePropertiesResult = json::from_json(&body)?;
+                    let rsp = RawResponse::from_bytes(status, headers, body).into();
+                    Ok(match res.next_link {
+                        Some(next_link) if !next_link.is_empty() => PagerResult::More {
+                            response: rsp,
+                            continuation: next_link.parse()?,
+                        },
+                        _ => PagerResult::Done { response: rsp },
+                    })
                 })
-            }
-        }))
+            },
+            Some(options.method_options),
+        ))
     }
 
     /// Lists the deleted certificates in the specified vault currently available for recovery.
@@ -772,65 +834,59 @@ impl CertificateClient {
         let options = options.unwrap_or_default().into_owned();
         let pipeline = self.pipeline.clone();
         let mut first_url = self.endpoint.clone();
-        first_url = first_url.join("deletedcertificates")?;
-        first_url
-            .query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        first_url.append_path("/deletedcertificates");
+        let mut query_builder = first_url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
         if let Some(include_pending) = options.include_pending {
-            first_url
-                .query_pairs_mut()
-                .append_pair("includePending", &include_pending.to_string());
+            query_builder.set_pair("includePending", include_pending.to_string());
         }
         if let Some(maxresults) = options.maxresults {
-            first_url
-                .query_pairs_mut()
-                .append_pair("maxresults", &maxresults.to_string());
+            query_builder.set_pair("maxresults", maxresults.to_string());
         }
+        query_builder.build();
         let api_version = self.api_version.clone();
-        Ok(Pager::from_callback(move |next_link: PagerState<Url>| {
-            let url = match next_link {
-                PagerState::More(next_link) => {
-                    let qp = next_link
-                        .query_pairs()
-                        .filter(|(name, _)| name.ne("api-version"));
-                    let mut next_link = next_link.clone();
-                    next_link
-                        .query_pairs_mut()
-                        .clear()
-                        .extend_pairs(qp)
-                        .append_pair("api-version", &api_version);
-                    next_link
-                }
-                PagerState::Initial => first_url.clone(),
-            };
-            let mut request = Request::new(url, Method::Get);
-            request.insert_header("accept", "application/json");
-            let ctx = options.method_options.context.clone();
-            let pipeline = pipeline.clone();
-            async move {
-                let rsp: RawResponse = pipeline.send(&ctx, &mut request).await?;
-                if !rsp.status().is_success() {
-                    let status = rsp.status();
-                    let http_error = HttpError::new(rsp).await;
-                    let error_kind = ErrorKind::http_response(
-                        status,
-                        http_error.error_code().map(std::borrow::ToOwned::to_owned),
-                    );
-                    return Err(Error::new(error_kind, http_error));
-                }
-                let (status, headers, body) = rsp.deconstruct();
-                let bytes = body.collect().await?;
-                let res: ListDeletedCertificatePropertiesResult = json::from_json(&bytes)?;
-                let rsp = RawResponse::from_bytes(status, headers, bytes).into();
-                Ok(match res.next_link {
-                    Some(next_link) if !next_link.is_empty() => PagerResult::More {
-                        response: rsp,
-                        continuation: next_link.parse()?,
-                    },
-                    _ => PagerResult::Done { response: rsp },
+        Ok(Pager::new(
+            move |next_link: PagerState<Url>, pager_options| {
+                let url = match next_link {
+                    PagerState::More(next_link) => {
+                        let mut next_link = next_link.clone();
+                        let mut query_builder = next_link.query_builder();
+                        query_builder.set_pair("api-version", &api_version);
+                        query_builder.build();
+                        next_link
+                    }
+                    PagerState::Initial => first_url.clone(),
+                };
+                let mut request = Request::new(url, Method::Get);
+                request.insert_header("accept", "application/json");
+                let pipeline = pipeline.clone();
+                Box::pin(async move {
+                    let rsp = pipeline
+                        .send(
+                            &pager_options.context,
+                            &mut request,
+                            Some(PipelineSendOptions {
+                                check_success: CheckSuccessOptions {
+                                    success_codes: &[200],
+                                },
+                                ..Default::default()
+                            }),
+                        )
+                        .await?;
+                    let (status, headers, body) = rsp.deconstruct();
+                    let res: ListDeletedCertificatePropertiesResult = json::from_json(&body)?;
+                    let rsp = RawResponse::from_bytes(status, headers, body).into();
+                    Ok(match res.next_link {
+                        Some(next_link) if !next_link.is_empty() => PagerResult::More {
+                            response: rsp,
+                            continuation: next_link.parse()?,
+                        },
+                        _ => PagerResult::Done { response: rsp },
+                    })
                 })
-            }
-        }))
+            },
+            Some(options.method_options),
+        ))
     }
 
     /// List certificate issuers for a specified key vault.
@@ -849,60 +905,56 @@ impl CertificateClient {
         let options = options.unwrap_or_default().into_owned();
         let pipeline = self.pipeline.clone();
         let mut first_url = self.endpoint.clone();
-        first_url = first_url.join("certificates/issuers")?;
-        first_url
-            .query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        first_url.append_path("/certificates/issuers");
+        let mut query_builder = first_url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
         if let Some(maxresults) = options.maxresults {
-            first_url
-                .query_pairs_mut()
-                .append_pair("maxresults", &maxresults.to_string());
+            query_builder.set_pair("maxresults", maxresults.to_string());
         }
+        query_builder.build();
         let api_version = self.api_version.clone();
-        Ok(Pager::from_callback(move |next_link: PagerState<Url>| {
-            let url = match next_link {
-                PagerState::More(next_link) => {
-                    let qp = next_link
-                        .query_pairs()
-                        .filter(|(name, _)| name.ne("api-version"));
-                    let mut next_link = next_link.clone();
-                    next_link
-                        .query_pairs_mut()
-                        .clear()
-                        .extend_pairs(qp)
-                        .append_pair("api-version", &api_version);
-                    next_link
-                }
-                PagerState::Initial => first_url.clone(),
-            };
-            let mut request = Request::new(url, Method::Get);
-            request.insert_header("accept", "application/json");
-            let ctx = options.method_options.context.clone();
-            let pipeline = pipeline.clone();
-            async move {
-                let rsp: RawResponse = pipeline.send(&ctx, &mut request).await?;
-                if !rsp.status().is_success() {
-                    let status = rsp.status();
-                    let http_error = HttpError::new(rsp).await;
-                    let error_kind = ErrorKind::http_response(
-                        status,
-                        http_error.error_code().map(std::borrow::ToOwned::to_owned),
-                    );
-                    return Err(Error::new(error_kind, http_error));
-                }
-                let (status, headers, body) = rsp.deconstruct();
-                let bytes = body.collect().await?;
-                let res: ListIssuerPropertiesResult = json::from_json(&bytes)?;
-                let rsp = RawResponse::from_bytes(status, headers, bytes).into();
-                Ok(match res.next_link {
-                    Some(next_link) if !next_link.is_empty() => PagerResult::More {
-                        response: rsp,
-                        continuation: next_link.parse()?,
-                    },
-                    _ => PagerResult::Done { response: rsp },
+        Ok(Pager::new(
+            move |next_link: PagerState<Url>, pager_options| {
+                let url = match next_link {
+                    PagerState::More(next_link) => {
+                        let mut next_link = next_link.clone();
+                        let mut query_builder = next_link.query_builder();
+                        query_builder.set_pair("api-version", &api_version);
+                        query_builder.build();
+                        next_link
+                    }
+                    PagerState::Initial => first_url.clone(),
+                };
+                let mut request = Request::new(url, Method::Get);
+                request.insert_header("accept", "application/json");
+                let pipeline = pipeline.clone();
+                Box::pin(async move {
+                    let rsp = pipeline
+                        .send(
+                            &pager_options.context,
+                            &mut request,
+                            Some(PipelineSendOptions {
+                                check_success: CheckSuccessOptions {
+                                    success_codes: &[200],
+                                },
+                                ..Default::default()
+                            }),
+                        )
+                        .await?;
+                    let (status, headers, body) = rsp.deconstruct();
+                    let res: ListIssuerPropertiesResult = json::from_json(&body)?;
+                    let rsp = RawResponse::from_bytes(status, headers, body).into();
+                    Ok(match res.next_link {
+                        Some(next_link) if !next_link.is_empty() => PagerResult::More {
+                            response: rsp,
+                            continuation: next_link.parse()?,
+                        },
+                        _ => PagerResult::Done { response: rsp },
+                    })
                 })
-            }
-        }))
+            },
+            Some(options.method_options),
+        ))
     }
 
     /// Merges a certificate or a certificate chain with a key pair existing on the server.
@@ -922,28 +974,38 @@ impl CertificateClient {
         parameters: RequestContent<MergeCertificateParameters>,
         options: Option<CertificateClientMergeCertificateOptions<'_>>,
     ) -> Result<Response<Certificate>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}/pending/merge");
+        let mut path = String::from("/certificates/{certificate-name}/pending/merge");
         path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Post);
         request.insert_header("accept", "application/json");
         request.insert_header("content-type", "application/json");
         request.set_body(parameters);
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[201],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -963,26 +1025,35 @@ impl CertificateClient {
         certificate_name: &str,
         options: Option<CertificateClientPurgeDeletedCertificateOptions<'_>>,
     ) -> Result<Response<(), NoFormat>> {
-        let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
-        let mut url = self.endpoint.clone();
-        let mut path = String::from("deletedcertificates/{certificate-name}");
-        path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
-        let mut request = Request::new(url, Method::Delete);
-        request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
         }
+        let options = options.unwrap_or_default();
+        let ctx = options.method_options.context.to_borrowed();
+        let mut url = self.endpoint.clone();
+        let mut path = String::from("/deletedcertificates/{certificate-name}");
+        path = path.replace("{certificate-name}", certificate_name);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
+        let mut request = Request::new(url, Method::Delete);
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[204],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -1002,26 +1073,36 @@ impl CertificateClient {
         certificate_name: &str,
         options: Option<CertificateClientRecoverDeletedCertificateOptions<'_>>,
     ) -> Result<Response<Certificate>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("deletedcertificates/{certificate-name}/recover");
+        let mut path = String::from("/deletedcertificates/{certificate-name}/recover");
         path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Post);
         request.insert_header("accept", "application/json");
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -1040,25 +1121,29 @@ impl CertificateClient {
         options: Option<CertificateClientRestoreCertificateOptions<'_>>,
     ) -> Result<Response<Certificate>> {
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        url = url.join("certificates/restore")?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path("/certificates/restore");
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Post);
         request.insert_header("accept", "application/json");
         request.insert_header("content-type", "application/json");
         request.set_body(parameters);
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -1077,25 +1162,29 @@ impl CertificateClient {
         options: Option<CertificateClientSetContactsOptions<'_>>,
     ) -> Result<Response<Contacts>> {
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        url = url.join("certificates/contacts")?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path("/certificates/contacts");
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Put);
         request.insert_header("accept", "application/json");
         request.insert_header("content-type", "application/json");
         request.set_body(contacts);
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -1117,28 +1206,38 @@ impl CertificateClient {
         parameter: RequestContent<SetIssuerParameters>,
         options: Option<CertificateClientSetIssuerOptions<'_>>,
     ) -> Result<Response<Issuer>> {
+        if issuer_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter issuer_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/issuers/{issuer-name}");
+        let mut path = String::from("/certificates/issuers/{issuer-name}");
         path = path.replace("{issuer-name}", issuer_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Put);
         request.insert_header("accept", "application/json");
         request.insert_header("content-type", "application/json");
         request.set_body(parameter);
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -1159,28 +1258,38 @@ impl CertificateClient {
         certificate_operation: RequestContent<UpdateCertificateOperationParameter>,
         options: Option<CertificateClientUpdateCertificateOperationOptions<'_>>,
     ) -> Result<Response<CertificateOperation>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}/pending");
+        let mut path = String::from("/certificates/{certificate-name}/pending");
         path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Patch);
         request.insert_header("accept", "application/json");
         request.insert_header("content-type", "application/json");
         request.set_body(certificate_operation);
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -1201,28 +1310,38 @@ impl CertificateClient {
         certificate_policy: RequestContent<CertificatePolicy>,
         options: Option<CertificateClientUpdateCertificatePolicyOptions<'_>>,
     ) -> Result<Response<CertificatePolicy>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}/policy");
+        let mut path = String::from("/certificates/{certificate-name}/policy");
         path = path.replace("{certificate-name}", certificate_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Patch);
         request.insert_header("accept", "application/json");
         request.insert_header("content-type", "application/json");
         request.set_body(certificate_policy);
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -1234,40 +1353,51 @@ impl CertificateClient {
     /// # Arguments
     ///
     /// * `certificate_name` - The name of the certificate in the given key vault.
-    /// * `certificate_version` - The version of the certificate.
     /// * `parameters` - The parameters for certificate update.
     /// * `options` - Optional parameters for the request.
     #[tracing::function("KeyVault.updateCertificate")]
     pub async fn update_certificate_properties(
         &self,
         certificate_name: &str,
-        certificate_version: &str,
         parameters: RequestContent<UpdateCertificatePropertiesParameters>,
         options: Option<CertificateClientUpdateCertificatePropertiesOptions<'_>>,
     ) -> Result<Response<Certificate>> {
+        if certificate_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter certificate_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/{certificate-name}/{certificate-version}");
+        let mut path = String::from("/certificates/{certificate-name}/{certificate-version}");
         path = path.replace("{certificate-name}", certificate_name);
-        path = path.replace("{certificate-version}", certificate_version);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        path = match options.certificate_version.as_ref() {
+            Some(certificate_version) => path.replace("{certificate-version}", certificate_version),
+            None => path.replace("{certificate-version}", ""),
+        };
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Patch);
         request.insert_header("accept", "application/json");
         request.insert_header("content-type", "application/json");
         request.set_body(parameters);
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 
@@ -1288,28 +1418,38 @@ impl CertificateClient {
         parameter: RequestContent<UpdateIssuerParameters>,
         options: Option<CertificateClientUpdateIssuerOptions<'_>>,
     ) -> Result<Response<Issuer>> {
+        if issuer_name.is_empty() {
+            return Err(azure_core::Error::with_message(
+                azure_core::error::ErrorKind::Other,
+                "parameter issuer_name cannot be empty",
+            ));
+        }
         let options = options.unwrap_or_default();
-        let ctx = Context::with_context(&options.method_options.context);
+        let ctx = options.method_options.context.to_borrowed();
         let mut url = self.endpoint.clone();
-        let mut path = String::from("certificates/issuers/{issuer-name}");
+        let mut path = String::from("/certificates/issuers/{issuer-name}");
         path = path.replace("{issuer-name}", issuer_name);
-        url = url.join(&path)?;
-        url.query_pairs_mut()
-            .append_pair("api-version", &self.api_version);
+        url.append_path(&path);
+        let mut query_builder = url.query_builder();
+        query_builder.set_pair("api-version", &self.api_version);
+        query_builder.build();
         let mut request = Request::new(url, Method::Patch);
         request.insert_header("accept", "application/json");
         request.insert_header("content-type", "application/json");
         request.set_body(parameter);
-        let rsp = self.pipeline.send(&ctx, &mut request).await?;
-        if !rsp.status().is_success() {
-            let status = rsp.status();
-            let http_error = HttpError::new(rsp).await;
-            let error_kind = ErrorKind::http_response(
-                status,
-                http_error.error_code().map(std::borrow::ToOwned::to_owned),
-            );
-            return Err(Error::new(error_kind, http_error));
-        }
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut request,
+                Some(PipelineSendOptions {
+                    check_success: CheckSuccessOptions {
+                        success_codes: &[200],
+                    },
+                    ..Default::default()
+                }),
+            )
+            .await?;
         Ok(rsp.into())
     }
 }
@@ -1317,7 +1457,7 @@ impl CertificateClient {
 impl Default for CertificateClientOptions {
     fn default() -> Self {
         Self {
-            api_version: String::from("7.6"),
+            api_version: String::from("2025-07-01"),
             client_options: ClientOptions::default(),
         }
     }

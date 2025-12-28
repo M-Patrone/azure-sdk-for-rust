@@ -55,7 +55,7 @@
 ####################
 
 # PRLabel: %Cosmos
-/sdk/cosmos/             @analogrelay @Pilchie @kirankumarkolli @tvaron3 @FabianMeiswinkel @kundadebdatta @nehrao1 @kushagraThapar
+/sdk/cosmos/             @Azure/azure-cosmos-rust-sdk
 
 # ServiceLabel: %Cosmos
 # AzureSDKOwners: @heaths
@@ -73,6 +73,12 @@
 # ServiceLabel: %Storage
 # AzureSDKOwners: @vincenttran-msft @jalauzon-msft
 
+# PRLabel: %Event Hubs
+/sdk/eventhubs/          @j7nw4r
+
+# ServiceLabel: %Event Hubs
+# AzureSDKOwners: @j7nw4r
+
 ####################
 # Management Libraries
 ####################
@@ -85,7 +91,7 @@
 /.github/workflows/      @Azure/azure-sdk-eng
 /.github/CODEOWNERS      @RickWinter @ronniegeraghty @Azure/azure-sdk-eng
 /.config/1espt/          @benbp @weshaggard
-/sdk/template/			 @hallipr
+/sdk/canary/             @hallipr
 
 # Add owners for notifications for specific pipelines
 /eng/common/pipelines/codeowners-linter.yml       @rickwinter

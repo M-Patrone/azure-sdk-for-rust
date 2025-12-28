@@ -81,6 +81,8 @@ async fn get_properties(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     info!("Properties: {:?}", properties);
     assert_eq!(properties.name, eventhub);
 
+    client.close().await?;
+
     Ok(())
 }
 
@@ -110,8 +112,11 @@ async fn get_partition_properties(ctx: TestContext) -> Result<(), Box<dyn Error>
     assert!(result.is_err());
     if let Err(err) = result {
         info!("Error: {:?}", err);
-        let kind = err.kind();
-        assert_eq!(*kind, azure_core::error::ErrorKind::Amqp);
+        let kind = &err.kind;
+        assert!(matches!(
+            kind,
+            azure_messaging_eventhubs::error::ErrorKind::AmqpError(_)
+        ));
         let amqp_error = err.source();
         assert!(amqp_error.is_some());
         let amqp_error = amqp_error.unwrap();
@@ -137,6 +142,8 @@ async fn get_partition_properties(ctx: TestContext) -> Result<(), Box<dyn Error>
         let amqp_error = err.source().unwrap().downcast_ref::<AmqpError>().unwrap();
         info!("AMQP error: {:?}", amqp_error);
     }
+
+    client.close().await?;
 
     Ok(())
 }
@@ -204,6 +211,8 @@ async fn send_eventdata(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     // Simple send.
     assert!(client.send_event("Hello, Event Hub!", None).await.is_ok());
 
+    client.close().await?;
+
     Ok(())
 }
 
@@ -249,6 +258,8 @@ async fn send_message(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     // Simple send.
     assert!(client.send_event("Hello, Event Hub!", None).await.is_ok());
 
+    client.close().await?;
+
     Ok(())
 }
 
@@ -268,6 +279,7 @@ async fn test_create_batch(ctx: TestContext) -> Result<(), Box<dyn Error>> {
         let batch = client.create_batch(None).await?;
         assert_eq!(batch.len(), 0);
     }
+    client.close().await?;
 
     Ok(())
 }
@@ -316,6 +328,8 @@ async fn test_create_and_send_batch(ctx: TestContext) -> Result<(), Box<dyn Erro
         let res = client.send_batch(batch, None).await;
         assert!(res.is_ok());
     }
+
+    client.close().await?;
 
     Ok(())
 }
@@ -388,6 +402,8 @@ async fn test_add_amqp_messages_to_batch(
 
     client.send_batch(batch, None).await?;
 
+    client.close().await?;
+
     Ok(())
 }
 
@@ -446,6 +462,8 @@ async fn test_overload_batch(ctx: TestContext) -> Result<(), Box<dyn Error>> {
         }
         assert!(result.is_ok());
     }
+
+    client.close().await?;
 
     Ok(())
 }

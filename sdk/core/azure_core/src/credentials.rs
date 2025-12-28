@@ -5,10 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt::Debug};
-use typespec_client_core::{fmt::SafeDebug, time::OffsetDateTime};
-
-/// Default Azure authorization scope.
-pub static DEFAULT_SCOPE_SUFFIX: &str = "/.default";
+use typespec_client_core::{fmt::SafeDebug, http::ClientMethodOptions, time::OffsetDateTime};
 
 /// Represents a secret.
 ///
@@ -17,6 +14,7 @@ pub static DEFAULT_SCOPE_SUFFIX: &str = "/.default";
 pub struct Secret(Cow<'static, str>);
 
 impl Secret {
+    /// Create a new `Secret`.
     pub fn new<T>(access_token: T) -> Self
     where
         T: Into<Cow<'static, str>>,
@@ -24,6 +22,7 @@ impl Secret {
         Self(access_token.into())
     }
 
+    /// Get the secret value.
     pub fn secret(&self) -> &str {
         &self.0
     }
@@ -89,7 +88,10 @@ impl AccessToken {
 
 /// Options for getting a token from a [`TokenCredential`]
 #[derive(Clone, Default, SafeDebug)]
-pub struct TokenRequestOptions;
+pub struct TokenRequestOptions<'a> {
+    /// Method options to be used when requesting a token.
+    pub method_options: ClientMethodOptions<'a>,
+}
 
 /// Represents a credential capable of providing an OAuth token.
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
@@ -99,6 +101,6 @@ pub trait TokenCredential: Send + Sync + Debug {
     async fn get_token(
         &self,
         scopes: &[&str],
-        options: Option<TokenRequestOptions>,
+        options: Option<TokenRequestOptions<'_>>,
     ) -> crate::Result<AccessToken>;
 }

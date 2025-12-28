@@ -1,9 +1,11 @@
+# cspell:ignore rustdoc
+
 [workspace]
 resolver = "2"
 members = [
-  "sdk/typespec",
-  "sdk/typespec/typespec_client_core",
-  "sdk/typespec/typespec_macros",
+  "sdk/core/typespec",
+  "sdk/core/typespec_client_core",
+  "sdk/core/typespec_macros",
   "sdk/core/azure_core",
   "sdk/core/azure_core_amqp",
   "sdk/core/azure_core_macros",
@@ -11,6 +13,7 @@ members = [
   "sdk/core/azure_core_test_macros",
   "sdk/core/azure_core_opentelemetry",
   "sdk/cosmos/azure_data_cosmos",
+  "sdk/cosmos/azure_data_cosmos_native",
   "sdk/identity/azure_identity",
   "sdk/eventhubs/azure_messaging_eventhubs",
   "sdk/eventhubs/azure_messaging_eventhubs_checkpointstore_blob",
@@ -18,10 +21,11 @@ members = [
   "sdk/keyvault/azure_security_keyvault_keys",
   "sdk/keyvault/azure_security_keyvault_secrets",
   "sdk/servicebus/azure_messaging_servicebus",
-  "sdk/template/azure_template_core",
-  "sdk/template/azure_template",
+  "sdk/canary/azure_canary_core",
+  "sdk/canary/azure_canary",
   "sdk/storage/azure_storage_common",
   "sdk/storage/azure_storage_blob",
+  "sdk/storage/azure_storage_queue",
 ]
 exclude = [
   "eng/scripts",
@@ -36,33 +40,33 @@ rust-version = "1.85"
 
 [workspace.dependencies.typespec]
 default-features = false
-path = "sdk/typespec"
-version = "0.8.0"
+path = "sdk/core/typespec"
+version = "0.11.0"
 
 [workspace.dependencies.typespec_client_core]
 default-features = false
-path = "sdk/typespec/typespec_client_core"
-version = "0.7.0"
+path = "sdk/core/typespec_client_core"
+version = "0.10.0"
 
 [workspace.dependencies.typespec_macros]
-version = "0.7.0"
-path = "sdk/typespec/typespec_macros"
+version = "0.10.0"
+path = "sdk/core/typespec_macros"
 
 [workspace.dependencies.azure_core]
 default-features = false
-version = "0.28.0"
+version = "0.31.0"
 path = "sdk/core/azure_core"
 
 [workspace.dependencies.azure_core_macros]
-version = "0.2.0"
+version = "0.5.0"
 path = "sdk/core/azure_core_macros"
 
 [workspace.dependencies.azure_core_amqp]
-version = "0.7.0"
+version = "0.10.0"
 path = "sdk/core/azure_core_amqp"
 
 [workspace.dependencies.azure_messaging_eventhubs]
-version = "0.7.0"
+version = "0.10.0"
 path = "sdk/eventhubs/azure_messaging_eventhubs"
 
 [workspace.dependencies.azure_core_opentelemetry]
@@ -83,7 +87,7 @@ path = "sdk/identity/azure_identity"
 
 [workspace.dependencies.azure_storage_blob]
 path = "sdk/storage/azure_storage_blob"
-version = "0.5.0"
+version = "0.8.0"
 
 [workspace.dependencies]
 async-lock = "3.0"
@@ -95,7 +99,7 @@ cargo_metadata = "0.18.1"
 clap = { version = "4.5.45", features = ["derive"] }
 criterion = { version = "0.5", features = ["async_tokio"] }
 dyn-clone = "1.0"
-fe2o3-amqp = { version = "0.14", features = ["native-tls", "uuid"] }
+fe2o3-amqp = { version = "0.14", features = ["uuid"] }
 fe2o3-amqp-ext = { version = "0.14" }
 fe2o3-amqp-management = { version = "0.14" }
 fe2o3-amqp-cbs = { version = "0.14" }
@@ -105,22 +109,21 @@ futures = "0.3"
 getrandom = { version = "0.3" }
 gloo-timers = { version = "0.3" }
 hmac = { version = "0.12" }
-litemap = "0.7.4"
-log = "0.4"
+include-file = { version = "0.5.1", default-features = false }
 openssl = { version = "0.10.72" }
 opentelemetry = { version = "0.30", features = ["trace"] }
 opentelemetry_sdk = "0.30"
 opentelemetry-http = "0.30"
 pin-project = "1.0"
 proc-macro2 = "1.0.97"
-quick-xml = { version = "0.31", features = ["serialize", "serde-types"] }
+quick-xml = { version = "0.38.3", features = ["serialize", "serde-types"] }
 quote = "1.0.37"
 rand = "0.9.1"
 rand_chacha = "0.9"
 reqwest = { version = "0.12.23", features = [
   "stream",
 ], default-features = false }
-rust_decimal.version = "1.37.2"
+rust_decimal = "1.37.2"
 rustc_version = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_amqp = { version = "0.14", features = ["uuid"] }
@@ -147,8 +150,8 @@ url = "2.2"
 uuid = { version = "1.18", features = ["v4"] }
 wasm-bindgen-futures = "0.4"
 wasm-bindgen-test = "0.3"
-zerofrom = "0.1.5"
 zip = { version = "4.0.0", default-features = false, features = ["deflate"] }
+moka = { version = "0.12", features = ["future"] }
 
 [workspace.lints.clippy]
 large_futures = "deny"
@@ -156,3 +159,6 @@ uninlined_format_args = "allow"
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs)'] }
+
+[workspace.lints.rustdoc]
+bare_urls = "allow"

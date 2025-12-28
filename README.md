@@ -1,7 +1,5 @@
 # Azure SDK for Rust
 
-[![Take Our Design Discussion Survey](https://img.shields.io/badge/Take%20Our%20Design%20Discussion%20Survey-008000?style=flat&link=https://www.surveymonkey.com/r/repo-badge)](https://www.surveymonkey.com/r/repo-badge)
-
 This repository is for the active development of the Azure SDK for Rust.
 
 ## Crates 📦
@@ -103,6 +101,8 @@ We would love to incorporate the community's input into our library design proce
 ## Contributing
 
 For details on contributing to this repository, see the [contributing guide](https://github.com/Azure/azure-sdk-for-rust/blob/main/CONTRIBUTING.md).
+
+For guidance on how AI agents should interact with this repository, see [AGENTS.md](https://github.com/Azure/azure-sdk-for-rust/blob/main/AGENTS.md).
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
 Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us

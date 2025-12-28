@@ -65,7 +65,7 @@ impl TestServiceClientWithMacros {
         let options = options.unwrap_or_default();
         let mut endpoint = Url::parse(endpoint)?;
         if !endpoint.scheme().starts_with("http") {
-            return Err(azure_core::Error::message(
+            return Err(azure_core::Error::with_message(
                 azure_core::error::ErrorKind::Other,
                 format!("{endpoint} must use http(s)"),
             ));
@@ -81,6 +81,7 @@ impl TestServiceClientWithMacros {
                 options.client_options,
                 Vec::default(),
                 Vec::default(),
+                None,
             ),
         })
     }
@@ -105,13 +106,14 @@ impl TestServiceClientWithMacros {
 
         let response = self
             .pipeline
-            .send(&options.method_options.context, &mut request)
+            .send(&options.method_options.context, &mut request, None)
             .await?;
         if !response.status().is_success() {
-            return Err(azure_core::Error::message(
+            return Err(azure_core::Error::with_message(
                 azure_core::error::ErrorKind::HttpResponse {
                     status: response.status(),
                     error_code: None,
+                    raw_response: None,
                 },
                 format!("Failed to GET {}: {}", request.url(), response.status()),
             ));
@@ -155,13 +157,14 @@ impl TestServiceClientWithMacros {
 
         let response = self
             .pipeline
-            .send(&options.method_options.context, &mut request)
+            .send(&options.method_options.context, &mut request, None)
             .await?;
         if !response.status().is_success() {
-            return Err(azure_core::Error::message(
+            return Err(azure_core::Error::with_message(
                 azure_core::error::ErrorKind::HttpResponse {
                     status: response.status(),
                     error_code: None,
+                    raw_response: None,
                 },
                 format!("Failed to GET {}: {}", request.url(), response.status()),
             ));
@@ -172,10 +175,12 @@ impl TestServiceClientWithMacros {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use super::*;
     use ::tracing::{info, trace};
     use azure_core::{
-        http::{ExponentialRetryOptions, RetryOptions},
+        http::{ExponentialRetryOptions, RetryOptions, StatusCode},
         tracing::TracerProvider,
         Result,
     };
@@ -188,7 +193,6 @@ mod tests {
         SpanKind as OpenTelemetrySpanKind, Status as OpenTelemetrySpanStatus,
     };
     use opentelemetry::Value as OpenTelemetryAttributeValue;
-    use typespec_client_core::http;
 
     fn create_exportable_tracer_provider() -> (Arc<SdkTracerProvider>, InMemorySpanExporter) {
         let otel_exporter = InMemorySpanExporter::default();
@@ -208,9 +212,9 @@ mod tests {
         let credential = recording.credential().clone();
         let mut options = TestServiceClientWithMacrosOptions {
             client_options: ClientOptions {
-                instrumentation: Some(InstrumentationOptions {
+                instrumentation: InstrumentationOptions {
                     tracer_provider: Some(azure_provider),
-                }),
+                },
                 ..Default::default()
             },
             ..Default::default()
@@ -510,13 +514,13 @@ mod tests {
         let credential = recording.credential().clone();
         let options = TestServiceClientWithMacrosOptions {
             client_options: ClientOptions {
-                instrumentation: Some(InstrumentationOptions {
+                instrumentation: InstrumentationOptions {
                     tracer_provider: Some(azure_provider),
-                }),
-                retry: Some(RetryOptions::exponential(ExponentialRetryOptions {
+                },
+                retry: RetryOptions::exponential(ExponentialRetryOptions {
                     max_retries: 3,
                     ..Default::default()
-                })),
+                }),
                 ..Default::default()
             },
             ..Default::default()
@@ -677,13 +681,11 @@ mod tests {
     async fn test_http_tracing_tests(ctx: TestContext) -> Result<()> {
         let recording = ctx.recording();
         let package_name = recording.var("CARGO_PKG_NAME", None);
-        let package_version = recording.var("CARGO_PKG_VERSION", None);
+        // Compare current version since recorded version may be older.
+        let package_version = env!("CARGO_PKG_VERSION").to_string();
         azure_core_test::tracing::assert_instrumentation_information(
             |tracer_provider| Ok(create_service_client(&ctx, tracer_provider)),
-            |client| {
-                let client = client;
-                Box::pin(async move { client.get("get", None).await })
-            },
+            async move |client| client.get("get", None).await,
             ExpectedInstrumentation {
                 package_name,
                 package_version,
@@ -701,15 +703,11 @@ mod tests {
 
     #[recorded::test()]
     async fn test_function_tracing_tests(ctx: TestContext) -> Result<()> {
-        let recording = ctx.recording();
-        let package_name = recording.var("CARGO_PKG_NAME", None);
-        let package_version = recording.var("CARGO_PKG_VERSION", None);
+        let package_name = ctx.recording().var("CARGO_PKG_NAME", None).to_string();
+        let package_version = env!("CARGO_PKG_VERSION").to_string();
         azure_core_test::tracing::assert_instrumentation_information(
             |tracer_provider| Ok(create_service_client(&ctx, tracer_provider)),
-            |client| {
-                let client = client;
-                Box::pin(async move { client.get_with_function_tracing("get", None).await })
-            },
+            async move |client| client.get_with_function_tracing("get", None).await,
             ExpectedInstrumentation {
                 package_name,
                 package_version,
@@ -731,28 +729,28 @@ mod tests {
     }
     #[recorded::test()]
     async fn test_function_tracing_tests_error(ctx: TestContext) -> Result<()> {
-        let recording = ctx.recording();
-        let package_name = recording.var("CARGO_PKG_NAME", None);
-        let package_version = recording.var("CARGO_PKG_VERSION", None);
+        use azure_core_test::tracing::ExpectedRestApiSpan;
+
+        let package_name = ctx.recording().var("CARGO_PKG_NAME", None).to_string();
+        let package_version = env!("CARGO_PKG_VERSION").to_string();
         azure_core_test::tracing::assert_instrumentation_information(
             |tracer_provider| Ok(create_service_client(&ctx, tracer_provider)),
-            |client| {
-                let client = client;
-                Box::pin(async move { client.get_with_function_tracing("index.htm", None).await })
-            },
+            async move |client| client.get_with_function_tracing("index.htm", None).await,
             ExpectedInstrumentation {
                 package_name,
                 package_version,
                 package_namespace: Some("Az.TestServiceClient"),
                 api_calls: vec![ExpectedApiInformation {
                     api_name: Some("macros_get_with_tracing"),
-                    expected_status_code: http::StatusCode::NotFound,
+                    api_children: vec![ExpectedRestApiSpan {
+                        expected_status_code: StatusCode::NotFound,
+                        ..Default::default()
+                    }],
                     additional_api_attributes: vec![
                         ("a.b", 1.into()),
                         ("az.telemetry", "Abc".into()),
                         ("string attribute", "index.htm".into()),
                     ],
-                    ..Default::default()
                 }],
             },
         )

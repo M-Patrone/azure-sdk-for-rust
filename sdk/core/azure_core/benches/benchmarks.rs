@@ -1,5 +1,8 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
 use azure_core::http::{
-    headers::Headers, HttpClient, Method, RawResponse, Request, StatusCode, Url,
+    headers::Headers, AsyncRawResponse, HttpClient, Method, Request, StatusCode, Url,
 };
 use azure_core_test::http::MockHttpClient;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -25,13 +28,51 @@ fn url_parsing_benchmark(c: &mut Criterion) {
     }
 }
 
+const ENDPOINT: &str = "https://my-vault.vault.azure.net";
+
+fn url_construction(c: &mut Criterion) {
+    let endpoint: Url = ENDPOINT.parse().unwrap();
+    let api_version = "7.6";
+
+    let mut group = c.benchmark_group("url_construction");
+
+    group.bench_function("append", |b| {
+        b.iter(|| {
+            let mut url = endpoint
+                .clone()
+                .join("secrets/")
+                .unwrap()
+                .join("secret-name")
+                .unwrap()
+                .join("secret-version")
+                .unwrap();
+            url.query_pairs_mut()
+                .append_pair("api-version", api_version);
+            let _ = black_box(url);
+        })
+    });
+
+    group.bench_function("format", |b| {
+        b.iter(|| {
+            let mut url = endpoint.clone();
+            let mut path = String::from("secrets/{secret-name}/{secret-version}");
+            path = path.replace("{secret-name}", "secret-name");
+            path = path.replace("{secret-version}", "secret-version");
+            url = url.join(&path).unwrap();
+            url.query_pairs_mut()
+                .append_pair("api-version", api_version);
+            let _ = black_box(url);
+        })
+    });
+}
+
 fn http_transport_test(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     // client to be used in the benchmark
     let mock_client = Arc::new(MockHttpClient::new(move |_| {
         async move {
-            Ok(RawResponse::from_bytes(
+            Ok(AsyncRawResponse::from_bytes(
                 StatusCode::Ok,
                 Headers::new(),
                 vec![],
@@ -65,7 +106,7 @@ fn http_transport_test(c: &mut Criterion) {
 criterion_group! {
     name = benchmarks;
     config = Criterion::default();
-    targets = url_parsing_benchmark, http_transport_test
+    targets = url_parsing_benchmark, url_construction, http_transport_test
 }
 
 criterion_main!(benchmarks);

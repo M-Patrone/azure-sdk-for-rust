@@ -88,8 +88,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let credential = DeveloperToolsCredential::new(None)?;
     let blob_client = BlobContainerClient::new(
         "https://yourstorageaccount.blob.core.windows.net",
-        "yourcontainername".to_string(),
-        credential.clone(),
+        "yourcontainername",
+        Some(credential.clone()),
         None,
     )?;
 
@@ -107,7 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_processor = EventProcessor::builder()
         .with_load_balancing_strategy(ProcessorStrategy::Greedy)
         .build(
-            Arc::new(consumer_client),
+            consumer_client,
             checkpoint_store,
         )
         .await?;
@@ -169,4 +169,4 @@ Azure SDK for Rust is licensed under the [MIT](https://github.com/Azure/azure-sd
 [Source code]: https://github.com/Azure/azure-sdk-for-rust/tree/main/sdk/eventhubs/azure_messaging_eventhubs_checkpointstore_blob/src
 [CONTRIBUTING.md]: https://github.com/Azure/azure-sdk-for-rust/blob/main/CONTRIBUTING.md
 [Code of Conduct FAQ]: https://opensource.microsoft.com/codeofconduct/faq/
-[default_cred_ref]: https://docs.rs/azure_identity/latest/azure_identity/struct.DefaultAzureCredential.html
+[default_cred_ref]: https://docs.rs/azure_identity/latest/azure_identity/struct.DeveloperToolsCredential.html

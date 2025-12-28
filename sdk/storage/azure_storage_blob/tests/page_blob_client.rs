@@ -11,7 +11,7 @@ use azure_storage_blob::{
         PageBlobClientSetSequenceNumberResultHeaders, SequenceNumberActionType,
     },
 };
-use azure_storage_blob_test::{get_blob_name, get_container_client};
+use azure_storage_blob_test::{get_blob_name, get_container_client, StorageAccount};
 use std::error::Error;
 
 #[recorded::test]
@@ -19,8 +19,9 @@ async fn test_create_page_blob(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     // Recording Setup
 
     let recording = ctx.recording();
-    let container_client = get_container_client(recording, true).await?;
-    let blob_client = container_client.blob_client(get_blob_name(recording));
+    let container_client =
+        get_container_client(recording, true, StorageAccount::Standard, None).await?;
+    let blob_client = container_client.blob_client(&get_blob_name(recording));
     let page_blob_client = blob_client.page_blob_client();
 
     // Regular Create Scenario
@@ -58,8 +59,9 @@ async fn test_create_page_blob(ctx: TestContext) -> Result<(), Box<dyn Error>> {
 async fn test_upload_page(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     // Recording Setup
     let recording = ctx.recording();
-    let container_client = get_container_client(recording, true).await?;
-    let blob_client = container_client.blob_client(get_blob_name(recording));
+    let container_client =
+        get_container_client(recording, true, StorageAccount::Standard, None).await?;
+    let blob_client = container_client.blob_client(&get_blob_name(recording));
     let page_blob_client = blob_client.page_blob_client();
     page_blob_client.create(512, None).await?;
     let data = vec![b'A'; 512];
@@ -78,7 +80,7 @@ async fn test_upload_page(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     let (status_code, _, response_body) = response.deconstruct();
     assert!(status_code.is_success());
     assert_eq!(512, content_length.unwrap());
-    assert_eq!(data, response_body.collect().await?);
+    assert_eq!(data, response_body.collect().await?.to_vec());
 
     container_client.delete_container(None).await?;
     Ok(())
@@ -88,8 +90,9 @@ async fn test_upload_page(ctx: TestContext) -> Result<(), Box<dyn Error>> {
 async fn test_clear_page(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     // Recording Setup
     let recording = ctx.recording();
-    let container_client = get_container_client(recording, true).await?;
-    let blob_client = container_client.blob_client(get_blob_name(recording));
+    let container_client =
+        get_container_client(recording, true, StorageAccount::Standard, None).await?;
+    let blob_client = container_client.blob_client(&get_blob_name(recording));
     let page_blob_client = blob_client.page_blob_client();
     page_blob_client.create(512, None).await?;
     let data = vec![b'A'; 512];
@@ -112,7 +115,7 @@ async fn test_clear_page(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     let (status_code, _, response_body) = response.deconstruct();
     assert!(status_code.is_success());
     assert_eq!(512, content_length.unwrap());
-    assert_eq!(vec![0; 512], response_body.collect().await?);
+    assert_eq!(vec![0; 512], response_body.collect().await?.to_vec());
 
     container_client.delete_container(None).await?;
     Ok(())
@@ -122,8 +125,9 @@ async fn test_clear_page(ctx: TestContext) -> Result<(), Box<dyn Error>> {
 async fn test_resize_blob(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     // Recording Setup
     let recording = ctx.recording();
-    let container_client = get_container_client(recording, true).await?;
-    let blob_client = container_client.blob_client(get_blob_name(recording));
+    let container_client =
+        get_container_client(recording, true, StorageAccount::Standard, None).await?;
+    let blob_client = container_client.blob_client(&get_blob_name(recording));
     let page_blob_client = blob_client.page_blob_client();
 
     // Blob Too Small Scenario
@@ -159,7 +163,7 @@ async fn test_resize_blob(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     let (status_code, _, response_body) = response.deconstruct();
     assert!(status_code.is_success());
     assert_eq!(512, content_length.unwrap());
-    assert_eq!(vec![b'A'; 512], response_body.collect().await?);
+    assert_eq!(vec![b'A'; 512], response_body.collect().await?.to_vec());
 
     container_client.delete_container(None).await?;
     Ok(())
@@ -170,8 +174,9 @@ async fn test_set_sequence_number(ctx: TestContext) -> Result<(), Box<dyn Error>
     // Recording Setup
 
     let recording = ctx.recording();
-    let container_client = get_container_client(recording, true).await?;
-    let blob_client = container_client.blob_client(get_blob_name(recording));
+    let container_client =
+        get_container_client(recording, true, StorageAccount::Standard, None).await?;
+    let blob_client = container_client.blob_client(&get_blob_name(recording));
     let page_blob_client = blob_client.page_blob_client();
 
     // Update Action
@@ -212,12 +217,14 @@ async fn test_set_sequence_number(ctx: TestContext) -> Result<(), Box<dyn Error>
 }
 
 #[recorded::test]
+#[ignore = "https://github.com/Azure/azure-sdk-for-rust/issues/3441"]
 async fn test_upload_page_from_url(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     // Recording Setup
     let recording = ctx.recording();
-    let container_client = get_container_client(recording, true).await?;
-    let blob_client_1 = container_client.blob_client(get_blob_name(recording));
-    let blob_client_2 = container_client.blob_client(get_blob_name(recording));
+    let container_client =
+        get_container_client(recording, true, StorageAccount::Standard, None).await?;
+    let blob_client_1 = container_client.blob_client(&get_blob_name(recording));
+    let blob_client_2 = container_client.blob_client(&get_blob_name(recording));
     let page_blob_client_1 = blob_client_1.page_blob_client();
     let page_blob_client_2 = blob_client_2.page_blob_client();
 
@@ -232,12 +239,6 @@ async fn test_upload_page_from_url(ctx: TestContext) -> Result<(), Box<dyn Error
             None,
         )
         .await?;
-    let source_url = format!(
-        "{}{}/{}",
-        blob_client_1.endpoint(),
-        blob_client_1.container_name(),
-        blob_client_1.blob_name()
-    );
 
     page_blob_client_2.create(1024, None).await?;
     let mut data_a = vec![b'A'; 512];
@@ -251,7 +252,7 @@ async fn test_upload_page_from_url(ctx: TestContext) -> Result<(), Box<dyn Error
         .await?;
     page_blob_client_2
         .upload_pages_from_url(
-            source_url,
+            blob_client_1.url().as_str().into(),
             format_page_range(0, data_b.len() as u64)?,
             data_b.len() as u64,
             format_page_range(512, data_b.len() as u64)?,
@@ -266,7 +267,7 @@ async fn test_upload_page_from_url(ctx: TestContext) -> Result<(), Box<dyn Error
     assert!(status_code.is_success());
     assert_eq!(1024, content_length.unwrap());
     data_a.extend(&data_b);
-    assert_eq!(data_a, response_body.collect().await?);
+    assert_eq!(data_a, response_body.collect().await?.to_vec());
 
     container_client.delete_container(None).await?;
     Ok(())
@@ -276,15 +277,16 @@ async fn test_upload_page_from_url(ctx: TestContext) -> Result<(), Box<dyn Error
 async fn test_get_page_ranges(ctx: TestContext) -> Result<(), Box<dyn Error>> {
     // Recording Setup
     let recording = ctx.recording();
-    let container_client = get_container_client(recording, true).await?;
-    let blob_client = container_client.blob_client(get_blob_name(recording));
+    let container_client =
+        get_container_client(recording, true, StorageAccount::Standard, None).await?;
+    let blob_client = container_client.blob_client(&get_blob_name(recording));
     let page_blob_client = blob_client.page_blob_client();
     page_blob_client.create(1024, None).await?;
 
     // Empty Page Range Scenario
     let get_page_ranges_response = page_blob_client.get_page_ranges(None).await?;
     // Assert
-    let page_ranges = get_page_ranges_response.into_body().await?;
+    let page_ranges = get_page_ranges_response.into_model()?;
     let page_range = page_ranges.page_range;
     assert!(page_range.is_none());
 
@@ -300,7 +302,7 @@ async fn test_get_page_ranges(ctx: TestContext) -> Result<(), Box<dyn Error>> {
         .await?;
     let get_page_ranges_response = page_blob_client.get_page_ranges(None).await?;
     // Assert
-    let page_ranges = get_page_ranges_response.into_body().await?;
+    let page_ranges = get_page_ranges_response.into_model()?;
     let page_range = page_ranges.page_range.unwrap();
     for range in page_range {
         assert_eq!(0, range.start.unwrap());

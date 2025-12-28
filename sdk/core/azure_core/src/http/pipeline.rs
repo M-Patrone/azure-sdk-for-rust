@@ -2,18 +2,24 @@
 // Licensed under the MIT License.
 
 use super::policies::ClientRequestIdPolicy;
-use crate::http::{
-    policies::{
-        Policy, PublicApiInstrumentationPolicy, RequestInstrumentationPolicy, UserAgentPolicy,
+use crate::{
+    error::CheckSuccessOptions,
+    http::{
+        check_success,
+        headers::{RETRY_AFTER_MS, X_MS_RETRY_AFTER_MS},
+        policies::{
+            Policy, PublicApiInstrumentationPolicy, RequestInstrumentationPolicy, UserAgentPolicy,
+        },
+        ClientOptions,
     },
-    ClientOptions,
 };
 use std::{
     any::{Any, TypeId},
-    ops::Deref,
     sync::Arc,
 };
-use typespec_client_core::http;
+use typespec_client_core::http::{
+    self, headers::RETRY_AFTER, policies::RetryHeaders, PipelineOptions,
+};
 
 /// Execution pipeline.
 ///
@@ -23,12 +29,11 @@ use typespec_client_core::http;
 ///    immediately.
 /// 2. User-specified per-call policies in [`ClientOptions::per_call_policies`] are executed.
 /// 3. The retry policy is executed. It allows to re-execute the following policies.
-/// 4. The [`CustomHeadersPolicy`](crate::http::policies::CustomHeadersPolicy) is executed
-/// 5. Client library-specified per-retry policies. Per-retry polices are always executed at least once but are
+/// 4. Client library-specified per-retry policies. Per-retry polices are always executed at least once but are
 ///    re-executed in case of retries.
-/// 6. User-specified per-retry policies in [`ClientOptions::per_try_policies`] are executed.
-/// 7. The transport policy is executed. Transport policy is always the last policy and is the policy that
-///    actually constructs the [`RawResponse`](http::RawResponse) to be passed up the pipeline.
+/// 5. User-specified per-retry policies in [`ClientOptions::per_try_policies`] are executed.
+/// 6. The transport policy is executed. Transport policy is always the last policy and is the policy that
+///    actually constructs the [`AsyncRawResponse`](http::AsyncRawResponse) to be passed up the pipeline.
 ///
 /// A pipeline is immutable. In other words a policy can either succeed and call the following
 /// policy of fail and return to the calling policy. Arbitrary policy "skip" must be avoided (but
@@ -37,18 +42,92 @@ use typespec_client_core::http;
 #[derive(Debug, Clone)]
 pub struct Pipeline(http::Pipeline);
 
+/// Options for the [`Pipeline::send`] function.
+#[derive(Debug, Default)]
+pub struct PipelineSendOptions {
+    /// If true, skip all checks including [`check_success`].
+    pub skip_checks: bool,
+
+    /// Options for [`check_success`]. If `skip_checks` is true, this field is ignored.
+    pub check_success: CheckSuccessOptions,
+}
+
+/// Internal structure used to pass options to the core pipeline.
+#[derive(Debug, Default)]
+struct CorePipelineSendOptions {
+    check_success: CheckSuccessOptions,
+    skip_checks: bool,
+}
+
+impl PipelineSendOptions {
+    /// Deconstructs the `PipelineSendOptions` into its core components.
+    fn deconstruct(self) -> (CorePipelineSendOptions, Option<http::PipelineSendOptions>) {
+        (
+            CorePipelineSendOptions {
+                skip_checks: self.skip_checks,
+                check_success: self.check_success,
+            },
+            None,
+        )
+    }
+}
+
+/// Options for the [`Pipeline::stream`] function.
+#[derive(Debug, Default)]
+pub struct PipelineStreamOptions {
+    /// If true, skip all checks including [`check_success`].
+    pub skip_checks: bool,
+
+    /// Options for [`check_success`]. If `skip_checks` is true, this field is ignored.
+    pub check_success: CheckSuccessOptions,
+}
+
+/// Internal structure used to pass options to the core pipeline.
+#[derive(Debug, Default)]
+struct CorePipelineStreamOptions {
+    check_success: CheckSuccessOptions,
+    skip_checks: bool,
+}
+
+impl PipelineStreamOptions {
+    /// Deconstructs the `PipelineStreamOptions` into its core components.
+    fn deconstruct(
+        self,
+    ) -> (
+        CorePipelineStreamOptions,
+        Option<http::PipelineStreamOptions>,
+    ) {
+        (
+            CorePipelineStreamOptions {
+                skip_checks: self.skip_checks,
+                check_success: self.check_success,
+            },
+            None,
+        )
+    }
+}
+
 impl Pipeline {
     /// Creates a new pipeline given the client library crate name and version,
     /// alone with user-specified and client library-specified policies.
     ///
     /// Crates can simply pass `option_env!("CARGO_PKG_NAME")` and `option_env!("CARGO_PKG_VERSION")` for the
     /// `crate_name` and `crate_version` arguments respectively.
+    ///
+    /// # Arguments
+    /// * `crate_name` - The name of the crate implementing the client library.
+    /// * `crate_version` - The version of the crate implementing the client library.
+    /// * `options` - The client options.
+    /// * `per_call_policies` - Policies to be executed per call, before the policies in `ClientOptions::per_call_policies`.
+    /// * `per_try_policies` - Policies to be executed per try, before the policies in `ClientOptions::per_try_policies`.
+    /// * `pipeline_options` - Additional options for the pipeline. If `None`, default options will be used.
     pub fn new(
         crate_name: Option<&'static str>,
         crate_version: Option<&'static str>,
         options: ClientOptions,
         per_call_policies: Vec<Arc<dyn Policy>>,
         per_try_policies: Vec<Arc<dyn Policy>>,
+        pipeline_options: Option<PipelineOptions>,
     ) -> Self {
         let (core_client_options, options) = options.deconstruct();
 
@@ -91,11 +170,73 @@ impl Pipeline {
             push_unique(&mut per_try_policies, request_instrumentation_policy);
         }
 
+        let pipeline_options = pipeline_options.unwrap_or_else(|| PipelineOptions {
+            retry_headers: RetryHeaders {
+                retry_headers: vec![X_MS_RETRY_AFTER_MS, RETRY_AFTER_MS, RETRY_AFTER],
+            },
+            ..PipelineOptions::default()
+        });
+
         Self(http::Pipeline::new(
             options,
             per_call_policies,
             per_try_policies,
+            Some(pipeline_options),
         ))
+    }
+
+    /// Sends a [`Request`](http::Request) through each configured [`Policy`] to get a [`RawResponse`](http::RawResponse) that is processed by each policy in reverse.
+    ///
+    /// # Arguments
+    /// * `ctx` - The context for the `Request`.
+    /// * `request` - The `Request` to send.
+    /// * `options` - Options for sending the `Request`, including check success options. If none, [`check_success`] will not be called.
+    ///
+    /// # Returns
+    ///
+    /// A [`http::RawResponse`] if the request was successful, or an `Error` if it failed.
+    /// If the response status code indicates an HTTP error, the function will attempt to parse the error response
+    /// body into an `ErrorResponse` and include it in the `Error`.
+    pub async fn send(
+        &self,
+        ctx: &http::Context<'_>,
+        request: &mut http::Request,
+        options: Option<PipelineSendOptions>,
+    ) -> crate::Result<http::RawResponse> {
+        let (core_send_options, send_options) = options.unwrap_or_default().deconstruct();
+        let result = self.0.send(ctx, request, send_options).await?;
+        if !core_send_options.skip_checks {
+            check_success(result, Some(core_send_options.check_success)).await
+        } else {
+            Ok(result)
+        }
+    }
+
+    /// Sends a [`Request`](http::Request) through each configured [`Policy`] to get a [`AsyncRawResponse`](http::AsyncRawResponse) that is processed by each policy in reverse.
+    ///
+    /// # Arguments
+    /// * `ctx` - The context for the `Request`.
+    /// * `request` - The `Request` to send.
+    /// * `options` - Options for sending the `Request`, including check success options. If none, [`check_success`] will not be called.
+    ///
+    /// # Returns
+    ///
+    /// A [`http::RawResponse`] if the request was successful, or an `Error` if it failed.
+    /// If the response status code indicates an HTTP error, the function will attempt to parse the error response
+    /// body into an `ErrorResponse` and include it in the `Error`.
+    pub async fn stream(
+        &self,
+        ctx: &http::Context<'_>,
+        request: &mut http::Request,
+        options: Option<PipelineStreamOptions>,
+    ) -> crate::Result<http::AsyncRawResponse> {
+        let (core_stream_options, stream_options) = options.unwrap_or_default().deconstruct();
+        let result = self.0.stream(ctx, request, stream_options).await?;
+        if !core_stream_options.skip_checks {
+            check_success(result, Some(core_stream_options.check_success)).await
+        } else {
+            Ok(result)
+        }
     }
 }
 
@@ -103,14 +244,6 @@ impl Pipeline {
 fn push_unique<T: Policy + 'static>(policies: &mut Vec<Arc<dyn Policy>>, policy: T) {
     if policies.iter().all(|p| TypeId::of::<T>() != p.type_id()) {
         policies.push(Arc::new(policy));
-    }
-}
-
-// TODO: Should we instead use the newtype pattern?
-impl Deref for Pipeline {
-    type Target = http::Pipeline;
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 
@@ -122,7 +255,7 @@ mod tests {
             headers::{self, HeaderName, Headers},
             policies::Policy,
             request::options::ClientRequestId,
-            ClientOptions, Context, Method, RawResponse, Request, StatusCode, TransportOptions,
+            AsyncRawResponse, ClientOptions, Context, Method, Request, StatusCode, Transport,
             UserAgentOptions,
         },
         Bytes,
@@ -141,7 +274,7 @@ mod tests {
         let mut ctx = Context::new();
         ctx.insert(ClientRequestId::new(CLIENT_REQUEST_ID.to_string()));
 
-        let transport = TransportOptions::new(Arc::new(MockHttpClient::new(|req| {
+        let transport = Transport::new(Arc::new(MockHttpClient::new(|req| {
             async {
                 // Assert
                 let header_value = req
@@ -153,7 +286,7 @@ mod tests {
                     "Custom header value should match the client request ID"
                 );
 
-                Ok(RawResponse::from_bytes(
+                Ok(AsyncRawResponse::from_bytes(
                     StatusCode::Ok,
                     Headers::new(),
                     Bytes::new(),
@@ -179,13 +312,14 @@ mod tests {
             options,
             per_call_policies,
             per_retry_policies,
+            None,
         );
 
         let mut request = Request::new("https://example.com".parse().unwrap(), Method::Get);
 
         // Act
         pipeline
-            .send(&ctx, &mut request)
+            .send(&ctx, &mut request, None)
             .await
             .expect("Pipeline execution failed");
     }
@@ -198,7 +332,7 @@ mod tests {
         let mut ctx = Context::new();
         ctx.insert(ClientRequestId::new(CLIENT_REQUEST_ID.to_string()));
 
-        let transport = TransportOptions::new(Arc::new(MockHttpClient::new(|req| {
+        let transport = Transport::new(Arc::new(MockHttpClient::new(|req| {
             async {
                 // Assert
                 let header_value = req
@@ -210,7 +344,7 @@ mod tests {
                     "Default header value should match the client request ID"
                 );
 
-                Ok(RawResponse::from_bytes(
+                Ok(AsyncRawResponse::from_bytes(
                     StatusCode::Ok,
                     Headers::new(),
                     Bytes::new(),
@@ -232,13 +366,14 @@ mod tests {
             options,
             per_call_policies,
             per_retry_policies,
+            None,
         );
 
         let mut request = Request::new("https://example.com".parse().unwrap(), Method::Get);
 
         // Act
         pipeline
-            .send(&ctx, &mut request)
+            .send(&ctx, &mut request, None)
             .await
             .expect("Pipeline execution failed");
     }
@@ -248,7 +383,7 @@ mod tests {
         // Arrange
         let ctx = Context::new();
 
-        let transport = TransportOptions::new(Arc::new(MockHttpClient::new(|req| {
+        let transport = Transport::new(Arc::new(MockHttpClient::new(|req| {
             async {
                 // Assert
                 let user_agent = req
@@ -263,7 +398,7 @@ mod tests {
                     user_agent
                 );
 
-                Ok(RawResponse::from_bytes(
+                Ok(AsyncRawResponse::from_bytes(
                     StatusCode::Ok,
                     Headers::new(),
                     Bytes::new(),
@@ -285,13 +420,14 @@ mod tests {
             options,
             per_call_policies,
             per_retry_policies,
+            None,
         );
 
         let mut request = Request::new("https://example.com".parse().unwrap(), Method::Get);
 
         // Act
         pipeline
-            .send(&ctx, &mut request)
+            .send(&ctx, &mut request, None)
             .await
             .expect("Pipeline execution failed");
     }
@@ -302,7 +438,7 @@ mod tests {
         const CUSTOM_APPLICATION_ID: &str = "my-custom-app/2.1.0";
         let ctx = Context::new();
 
-        let transport = TransportOptions::new(Arc::new(MockHttpClient::new(|req| {
+        let transport = Transport::new(Arc::new(MockHttpClient::new(|req| {
             async {
                 // Assert
                 let user_agent = req
@@ -317,7 +453,7 @@ mod tests {
                     user_agent
                 );
 
-                Ok(RawResponse::from_bytes(
+                Ok(AsyncRawResponse::from_bytes(
                     StatusCode::Ok,
                     Headers::new(),
                     Bytes::new(),
@@ -332,7 +468,7 @@ mod tests {
 
         let options = ClientOptions {
             transport: Some(transport),
-            user_agent: Some(user_agent_options),
+            user_agent: user_agent_options,
             ..Default::default()
         };
 
@@ -345,13 +481,14 @@ mod tests {
             options,
             per_call_policies,
             per_retry_policies,
+            None,
         );
 
         let mut request = Request::new("https://example.com".parse().unwrap(), Method::Get);
 
         // Act
         pipeline
-            .send(&ctx, &mut request)
+            .send(&ctx, &mut request, None)
             .await
             .expect("Pipeline execution failed");
     }

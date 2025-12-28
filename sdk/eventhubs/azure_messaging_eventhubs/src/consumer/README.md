@@ -10,11 +10,11 @@ and manage the lifecycle of the consumer client.
 ### Creating a new [`ConsumerClient`] instance
 
 ```rust no_run
-use azure_identity::{DeveloperToolsCredential, TokenCredentialOptions};
+use azure_identity::DeveloperToolsCredential;
 use azure_messaging_eventhubs::ConsumerClient;
 
 #[tokio::main]
-async fn main() -> Result<(), azure_core::Error> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let my_credential = DeveloperToolsCredential::new(None)?;
     let consumer = ConsumerClient::builder()
         .open("my_namespace", "my_eventhub".to_string(), my_credential)
@@ -26,11 +26,11 @@ async fn main() -> Result<(), azure_core::Error> {
 ### Opening a connection to the Event Hub
 
 ```rust no_run
-use azure_identity::{DeveloperToolsCredential, TokenCredentialOptions};
+use azure_identity::DeveloperToolsCredential;
 use azure_messaging_eventhubs::ConsumerClient;
 
 #[tokio::main]
-async fn main() -> Result<(), azure_core::Error> {
+async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
     let my_credential = DeveloperToolsCredential::new(None)?;
     let result = ConsumerClient::builder()
         .open("my_namespace", "my_eventhub".to_string(), my_credential)
@@ -53,11 +53,11 @@ async fn main() -> Result<(), azure_core::Error> {
 ### Closing the connection to the Event Hub
 
 ```rust no_run
-use azure_identity::{DeveloperToolsCredential, TokenCredentialOptions};
+use azure_identity::DeveloperToolsCredential;
 use azure_messaging_eventhubs::ConsumerClient;
 
 #[tokio::main]
-async fn main() -> Result<(), azure_core::Error> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let my_credential = DeveloperToolsCredential::new(None)?;
     let consumer = ConsumerClient::builder()
         .open("my_namespace", "my_eventhub".to_string(), my_credential)
@@ -83,7 +83,7 @@ async fn main() -> Result<(), azure_core::Error> {
 
 ```rust no_run
 use futures::stream::StreamExt;
-use azure_identity::{DeveloperToolsCredential, TokenCredentialOptions};
+use azure_identity::DeveloperToolsCredential;
 use azure_messaging_eventhubs::ConsumerClient;
 use futures::pin_mut;
 

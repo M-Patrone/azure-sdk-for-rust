@@ -1,8 +1,11 @@
 // Copyright (c) Microsoft Corporation. All Rights reserved
 // Licensed under the MIT license.
 
-use super::value::{AmqpOrderedMap, AmqpSymbol, AmqpValue};
-use azure_core::{error::Result, http::Url, time::Duration};
+use crate::{
+    error::Result,
+    value::{AmqpOrderedMap, AmqpSymbol, AmqpValue},
+};
+use azure_core::{http::Url, time::Duration};
 use std::fmt::Debug;
 
 #[cfg(all(feature = "fe2o3_amqp", not(target_arch = "wasm32")))]
@@ -38,16 +41,32 @@ pub struct AmqpConnectionOptions {
 
 impl AmqpConnectionOptions {}
 
+/// Trait defining the asynchronous APIs for AMQP connection operations.
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 pub trait AmqpConnectionApis {
+    /// Asynchronously opens an AMQP connection.
+    ///
+    /// # Arguments
+    /// - `name`: The name of the connection.
+    /// - `url`: The URL of the AMQP broker.
+    /// - `options`: Optional connection options.
     async fn open(
         &self,
         name: String,
         url: Url,
         options: Option<AmqpConnectionOptions>,
     ) -> Result<()>;
+
+    /// Asynchronously closes the AMQP connection.
     async fn close(&self) -> Result<()>;
+
+    /// Asynchronously closes the AMQP connection with an error condition.
+    ///
+    /// # Arguments
+    /// - `condition`: The error condition as an `AmqpSymbol`.
+    /// - `description`: An optional description of the error.
+    /// - `info`: Optional additional information as an `AmqpOrderedMap`.
     async fn close_with_error(
         &self,
         condition: AmqpSymbol,
@@ -56,6 +75,7 @@ pub trait AmqpConnectionApis {
     ) -> Result<()>;
 }
 
+/// Struct representing an AMQP connection.
 #[derive(Default)]
 pub struct AmqpConnection {
     pub(crate) implementation: ConnectionImplementation,
@@ -90,6 +110,7 @@ impl AmqpConnectionApis for AmqpConnection {
 }
 
 impl AmqpConnection {
+    /// Creates a new instance of `AmqpConnection`.
     pub fn new() -> Self {
         Self {
             implementation: ConnectionImplementation::new(),
@@ -269,10 +290,9 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[tokio::test]
     async fn amqp_connection_open() {
-        let address = std::env::var("TEST_BROKER_ADDRESS");
-        if address.is_ok() {
+        if let Ok(address) = std::env::var("TEST_BROKER_ADDRESS") {
             let connection = AmqpConnection::new();
-            let url = Url::parse(&address.unwrap()).unwrap();
+            let url = Url::parse(&address).unwrap();
             connection
                 .open("test".to_string(), url, None)
                 .await
@@ -284,8 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn amqp_connection_open_with_error() {
-        let address = std::env::var("TEST_BROKER_ADDRESS");
-        if address.is_ok() {
+        if std::env::var("TEST_BROKER_ADDRESS").is_ok() {
             let connection = AmqpConnection::new();
             let url = Url::parse("amqp://localhost:32767").unwrap();
             assert!(connection
@@ -300,10 +319,9 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[tokio::test]
     async fn amqp_connection_close() {
-        let address = std::env::var("TEST_BROKER_ADDRESS");
-        if address.is_ok() {
+        if let Ok(address) = std::env::var("TEST_BROKER_ADDRESS") {
             let connection = AmqpConnection::new();
-            let url = Url::parse(&address.unwrap()).unwrap();
+            let url = Url::parse(&address).unwrap();
             connection
                 .open("test".to_string(), url, None)
                 .await
@@ -318,10 +336,9 @@ mod tests {
     #[tokio::test]
     async fn amqp_connection_close_with_error() {
         tracing_subscriber::fmt::init();
-        let address = std::env::var("TEST_BROKER_ADDRESS");
-        if address.is_ok() {
+        if let Ok(address) = std::env::var("TEST_BROKER_ADDRESS") {
             let connection = AmqpConnection::new();
-            let url = Url::parse(&address.unwrap()).unwrap();
+            let url = Url::parse(&address).unwrap();
             connection
                 .open("test".to_string(), url, None)
                 .await

@@ -41,6 +41,7 @@ impl From<Error> for azure_core::Error {
             azure_core::error::ErrorKind::HttpResponse {
                 status: error.status_code,
                 error_code: Some(error.status.clone()),
+                raw_response: None,
             },
             error,
         )
@@ -69,7 +70,7 @@ pub struct StartPayload {
 impl TryFrom<StartPayload> for RequestContent<StartPayload> {
     type Error = azure_core::Error;
     fn try_from(value: StartPayload) -> Result<Self, Self::Error> {
-        RequestContent::try_from(to_json(&value)?)
+        Ok(to_json(&value)?.into())
     }
 }
 
@@ -88,7 +89,7 @@ pub struct VariablePayload {
 impl TryFrom<VariablePayload> for RequestContent<VariablePayload> {
     type Error = azure_core::Error;
     fn try_from(value: VariablePayload) -> Result<Self, Self::Error> {
-        RequestContent::try_from(to_json(&value)?)
+        Ok(to_json(&value)?.into())
     }
 }
 
@@ -111,7 +112,7 @@ pub struct SanitizerList {
 impl TryFrom<SanitizerList> for RequestContent<SanitizerList> {
     type Error = azure_core::Error;
     fn try_from(value: SanitizerList) -> Result<Self, Self::Error> {
-        RequestContent::try_from(to_json(&value)?)
+        Ok(to_json(&value)?.into())
     }
 }
 

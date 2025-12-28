@@ -2,17 +2,17 @@
 // Licensed under the MIT License.
 
 use crate::models::{
-    AppendBlobClientCreateOptions, BlobTag, BlobTags, BlockBlobClientUploadBlobFromUrlOptions,
-    PageBlobClientCreateOptions,
+    AccessPolicy, AppendBlobClientCreateOptions, BlobTag, BlobTags,
+    BlockBlobClientUploadBlobFromUrlOptions, BlockBlobClientUploadOptions,
+    PageBlobClientCreateOptions, SignedIdentifier, SignedIdentifiers,
 };
-use azure_core::error::ErrorKind;
 use std::collections::HashMap;
 
 /// Augments the current options bag to only create if the Page blob does not already exist.
 /// # Arguments
 ///
 /// * `self` - The options bag to be modified.
-impl<'a> PageBlobClientCreateOptions<'a> {
+impl PageBlobClientCreateOptions<'_> {
     pub fn with_if_not_exists(self) -> Self {
         Self {
             if_none_match: Some("*".into()),
@@ -25,7 +25,7 @@ impl<'a> PageBlobClientCreateOptions<'a> {
 /// # Arguments
 ///
 /// * `self` - The options bag to be modified.
-impl<'a> AppendBlobClientCreateOptions<'a> {
+impl AppendBlobClientCreateOptions<'_> {
     pub fn with_if_not_exists(self) -> Self {
         Self {
             if_none_match: Some("*".into()),
@@ -38,7 +38,7 @@ impl<'a> AppendBlobClientCreateOptions<'a> {
 /// # Arguments
 ///
 /// * `self` - The options bag to be modified.
-impl<'a> BlockBlobClientUploadBlobFromUrlOptions<'a> {
+impl BlockBlobClientUploadBlobFromUrlOptions<'_> {
     pub fn with_if_not_exists(self) -> Self {
         Self {
             if_none_match: Some("*".into()),
@@ -47,30 +47,39 @@ impl<'a> BlockBlobClientUploadBlobFromUrlOptions<'a> {
     }
 }
 
-/// Converts a `BlobTags` struct into `HashMap<String, String>`.
-impl TryFrom<BlobTags> for HashMap<String, String> {
-    type Error = azure_core::Error;
+/// Augments the current options bag to include blob tags.
+/// # Arguments
+///
+/// * `self` - The options bag to be modified.
+/// * `tags` - A HashMap of key-value pairs representing the blob tags.
+impl BlockBlobClientUploadOptions<'_> {
+    pub fn with_tags(self, tags: HashMap<String, String>) -> Self {
+        let tags_string = tags
+            .iter()
+            .map(|(key, value)| format!("{}={}", key, value))
+            .collect::<Vec<_>>()
+            .join("&");
 
-    fn try_from(blob_tags: BlobTags) -> Result<Self, azure_core::Error> {
+        Self {
+            blob_tags_string: Some(tags_string),
+            ..self
+        }
+    }
+}
+
+/// Converts a `BlobTags` struct into `HashMap<String, String>`.
+impl From<BlobTags> for HashMap<String, String> {
+    fn from(blob_tags: BlobTags) -> Self {
         let mut map = HashMap::new();
 
         if let Some(tags) = blob_tags.blob_tag_set {
             for tag in tags {
-                match (tag.key, tag.value) {
-                    (Some(k), Some(v)) => {
-                        map.insert(k, v);
-                    }
-                    _ => {
-                        return Err(azure_core::Error::message(
-                            azure_core::error::ErrorKind::DataConversion,
-                            "BlobTag missing key or value",
-                        ));
-                    }
+                if let (Some(key), Some(value)) = (tag.key, tag.value) {
+                    map.insert(key, value);
                 }
             }
         }
-
-        Ok(map)
+        map
     }
 }
 
@@ -86,6 +95,27 @@ impl From<HashMap<String, String>> for BlobTags {
             .collect();
         BlobTags {
             blob_tag_set: Some(blob_tags),
+        }
+    }
+}
+
+/// Converts a `HashMap<String, AccessPolicy>` into a `SignedIdentifiers` struct.
+impl From<HashMap<String, AccessPolicy>> for SignedIdentifiers {
+    fn from(policies: HashMap<String, AccessPolicy>) -> Self {
+        if policies.is_empty() {
+            return SignedIdentifiers { items: None };
+        }
+
+        let signed_identifiers: Vec<SignedIdentifier> = policies
+            .into_iter()
+            .map(|(id, access_policy)| SignedIdentifier {
+                id: Some(id),
+                access_policy: Some(access_policy),
+            })
+            .collect();
+
+        SignedIdentifiers {
+            items: Some(signed_identifiers),
         }
     }
 }

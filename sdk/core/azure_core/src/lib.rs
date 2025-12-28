@@ -1,29 +1,26 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![deny(missing_debug_implementations, nonstandard_style)]
 #![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![warn(missing_docs)]
 
 #[macro_use]
 mod macros;
 
-mod constants;
+pub mod cloud;
 pub mod credentials;
+pub mod error;
 pub mod hmac;
 pub mod http;
-
 #[cfg(feature = "test")]
 pub mod test;
 
-pub use constants::*;
-
 // Re-export modules in typespec_client_core such that azure_core-based crates don't need to reference it directly.
 pub use typespec_client_core::{
-    async_runtime, base64, create_enum, create_extensible_enum,
-    error::{self, Error, Result},
-    fmt, json, sleep, stream, time, Bytes, Uuid,
+    async_runtime, base64, fmt, json, sleep, stream, time, Bytes, Error, Result, Uuid, Value,
 };
 
 /// Abstractions for distributed tracing and telemetry.
@@ -38,3 +35,27 @@ pub mod tracing {
 
 #[cfg(feature = "xml")]
 pub use typespec_client_core::xml;
+
+#[cfg(not(target_arch = "wasm32"))]
+mod conditional_send {
+    /// Conditionally implements [`Send`] based on the `target_arch`.
+    ///
+    /// This implementation requires `Send`.
+    pub trait ConditionalSend: Send {}
+
+    impl<T> ConditionalSend for T where T: Send {}
+}
+
+#[cfg(target_arch = "wasm32")]
+mod conditional_send {
+    /// Conditionally implements [`Send`] based on the `target_arch`.
+    ///
+    /// This implementation does not require `Send`.
+    pub trait ConditionalSend {}
+
+    impl<T> ConditionalSend for T {}
+}
+
+mod private {
+    pub trait Sealed {}
+}

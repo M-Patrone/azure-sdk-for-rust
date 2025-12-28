@@ -2,10 +2,11 @@
 // Licensed under the MIT License.
 
 use crate::{
-    env::Env, AppServiceManagedIdentityCredential, ImdsId, TokenCredentialOptions,
+    authentication_error, env::Env, AppServiceManagedIdentityCredential, ImdsId,
     VirtualMachineManagedIdentityCredential,
 };
 use azure_core::credentials::{AccessToken, TokenCredential, TokenRequestOptions};
+use azure_core::http::ClientOptions;
 use std::sync::Arc;
 use tracing::info;
 
@@ -29,19 +30,30 @@ pub struct ManagedIdentityCredential {
 /// Options for constructing a new [`ManagedIdentityCredential`].
 #[derive(Clone, Debug, Default)]
 pub struct ManagedIdentityCredentialOptions {
-    /// The [`TokenCredentialOptions`] to use for the credential.
-    pub credential_options: TokenCredentialOptions,
-
     /// Specifies a user-assigned identity the credential should authenticate.
     /// When `None`, the credential will authenticate a system-assigned identity, if any.
     pub user_assigned_id: Option<UserAssignedId>,
+
+    /// The [`ClientOptions`] to use for the credential's pipeline.
+    pub client_options: ClientOptions,
+
+    #[cfg(test)]
+    pub(crate) env: Env,
 }
 
 impl ManagedIdentityCredential {
+    /// Creates a new instance of `ManagedIdentityCredential`.
+    ///
+    /// # Arguments
+    /// * `options`: Options for configuring the credential. If `None` is provided, default options will be used.
+    ///
     pub fn new(options: Option<ManagedIdentityCredentialOptions>) -> azure_core::Result<Arc<Self>> {
         let options = options.unwrap_or_default();
-        let env = options.credential_options.env();
-        let source = get_source(env);
+        #[cfg(test)]
+        let env = options.env;
+        #[cfg(not(test))]
+        let env = Env::default();
+        let source = get_source(&env);
         let id = options
             .user_assigned_id
             .clone()
@@ -53,20 +65,20 @@ impl ManagedIdentityCredential {
                 // App Service does accept resource IDs, however this crate's current implementation sends
                 // them in the wrong query parameter: https://github.com/Azure/azure-sdk-for-rust/issues/2407
                 if let ImdsId::MsiResId(_) = id {
-                    return Err(azure_core::Error::with_message(
+                    return Err(azure_core::Error::with_message_fn(
                         azure_core::error::ErrorKind::Credential,
                         || {
                             "User-assigned resource IDs aren't supported for App Service. Use a client or object ID instead.".to_string()
                         },
                     ));
                 }
-                AppServiceManagedIdentityCredential::new(id, options.credential_options)?
+                AppServiceManagedIdentityCredential::new(id, options.client_options, env)?
             }
             ManagedIdentitySource::Imds => {
-                VirtualMachineManagedIdentityCredential::new(id, options.credential_options)?
+                VirtualMachineManagedIdentityCredential::new(id, options.client_options, env)?
             }
             _ => {
-                return Err(azure_core::Error::with_message(
+                return Err(azure_core::Error::with_message_fn(
                     azure_core::error::ErrorKind::Credential,
                     || format!("{} managed identity isn't supported", source.as_str()),
                 ));
@@ -85,15 +97,18 @@ impl TokenCredential for ManagedIdentityCredential {
     async fn get_token(
         &self,
         scopes: &[&str],
-        options: Option<TokenRequestOptions>,
+        options: Option<TokenRequestOptions<'_>>,
     ) -> azure_core::Result<AccessToken> {
         if scopes.len() != 1 {
             return Err(azure_core::Error::with_message(
                 azure_core::error::ErrorKind::Credential,
-                || "ManagedIdentityCredential requires exactly one scope".to_string(),
+                "ManagedIdentityCredential requires exactly one scope".to_string(),
             ));
         }
-        self.credential.get_token(scopes, options).await
+        self.credential
+            .get_token(scopes, options)
+            .await
+            .map_err(|err| authentication_error(stringify!(ManagedIdentityCredential), err))
     }
 }
 
@@ -150,12 +165,16 @@ fn get_source(env: &Env) -> ManagedIdentitySource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::env::Env;
-    use crate::tests::{LIVE_TEST_RESOURCE, LIVE_TEST_SCOPES};
-    use azure_core::http::headers::Headers;
-    use azure_core::http::{Method, RawResponse, Request, StatusCode, Url};
+    use crate::{
+        env::Env,
+        tests::{LIVE_TEST_RESOURCE, LIVE_TEST_SCOPES},
+    };
+    use azure_core::http::{
+        AsyncRawResponse, Method, RawResponse, Request, StatusCode, Transport, Url,
+    };
     use azure_core::time::OffsetDateTime;
     use azure_core::Bytes;
+    use azure_core::{error::ErrorKind, http::headers::Headers};
     use azure_core_test::{http::MockHttpClient, recorded};
     use futures::FutureExt;
     use std::env;
@@ -187,6 +206,68 @@ mod tests {
         assert_eq!(StatusCode::Ok, status, "Test app responded with '{body}'");
 
         Ok(())
+    }
+
+    async fn run_error_response_test(source: ManagedIdentitySource) {
+        let expected_status = StatusCode::ImATeapot;
+        let headers = Headers::default();
+        let content: &str = "is a teapot";
+        let body = Bytes::copy_from_slice(content.as_bytes());
+        let expected_response =
+            RawResponse::from_bytes(expected_status, headers.clone(), body.clone());
+        let mock_headers = headers.clone();
+        let mock_body = body.clone();
+        let mock_client = MockHttpClient::new(move |_| {
+            let headers = mock_headers.clone();
+            let body = mock_body.clone();
+            async move { Ok(AsyncRawResponse::from_bytes(expected_status, headers, body)) }.boxed()
+        });
+        let test_env = match source {
+            ManagedIdentitySource::Imds => Env::from(&[][..]),
+            ManagedIdentitySource::AppService => Env::from(
+                &[
+                    (
+                        IDENTITY_ENDPOINT,
+                        "http://localhost/metadata/identity/oauth2/token",
+                    ),
+                    (IDENTITY_HEADER, "secret"),
+                ][..],
+            ),
+            other => panic!("unsupported managed identity source {:?}", other),
+        };
+        let options = ManagedIdentityCredentialOptions {
+            client_options: ClientOptions {
+                transport: Some(Transport::new(Arc::new(mock_client))),
+                ..Default::default()
+            },
+            env: test_env,
+            ..Default::default()
+        };
+        let credential = ManagedIdentityCredential::new(Some(options)).expect("credential");
+        let err = credential
+            .get_token(LIVE_TEST_SCOPES, None)
+            .await
+            .expect_err("expected error");
+        assert!(matches!(err.kind(), ErrorKind::Credential));
+        assert_eq!(
+            "ManagedIdentityCredential authentication failed. The request failed: is a teapot\nTo troubleshoot, visit https://aka.ms/azsdk/rust/identity/troubleshoot#managed-id",
+            err.to_string(),
+        );
+        match err
+            .downcast_ref::<azure_core::Error>()
+            .expect("returned error should wrap an azure_core::Error")
+            .kind()
+        {
+            ErrorKind::HttpResponse {
+                error_code: None,
+                raw_response: Some(response),
+                status,
+            } => {
+                assert_eq!(response.as_ref(), &expected_response);
+                assert_eq!(expected_status, *status);
+            }
+            err => panic!("unexpected {:?}", err),
+        };
     }
 
     async fn run_supported_source_test(
@@ -236,7 +317,7 @@ mod tests {
                         assert_eq!(actual.headers().get_str(k).unwrap(), v.as_str())
                     });
 
-                    Ok(RawResponse::from_bytes(
+                    Ok(AsyncRawResponse::from_bytes(
                         StatusCode::Ok,
                         Headers::default(),
                         Bytes::from(response_format.replacen(
@@ -250,9 +331,9 @@ mod tests {
             .boxed()
         });
         let mut options = options.unwrap_or_default();
-        options.credential_options = TokenCredentialOptions {
-            env,
-            http_client: Arc::new(mock_client),
+        options.env = env;
+        options.client_options = ClientOptions {
+            transport: Some(Transport::new(Arc::new(mock_client))),
             ..Default::default()
         };
         let cred = ManagedIdentityCredential::new(Some(options)).expect("credential");
@@ -271,10 +352,7 @@ mod tests {
             std::mem::discriminant(&expected_source)
         );
         let result = ManagedIdentityCredential::new(Some(ManagedIdentityCredentialOptions {
-            credential_options: TokenCredentialOptions {
-                env,
-                ..Default::default()
-            },
+            env,
             ..Default::default()
         }));
         assert!(
@@ -363,6 +441,11 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn app_service_error_response() {
+        run_error_response_test(ManagedIdentitySource::AppService).await
+    }
+
+    #[tokio::test]
     async fn app_service_object_id() {
         run_app_service_test(Some(ManagedIdentityCredentialOptions {
             user_assigned_id: Some(UserAssignedId::ObjectId("expected object ID".to_string())),
@@ -374,13 +457,11 @@ mod tests {
     #[tokio::test]
     async fn app_service_resource_id() {
         let result = ManagedIdentityCredential::new(Some(ManagedIdentityCredentialOptions {
-            credential_options: TokenCredentialOptions {
-                env: Env::from(&[(IDENTITY_ENDPOINT, "..."), (IDENTITY_HEADER, "x-id-header")][..]),
-                ..Default::default()
-            },
+            env: Env::from(&[(IDENTITY_ENDPOINT, "..."), (IDENTITY_HEADER, "x-id-header")][..]),
             user_assigned_id: Some(UserAssignedId::ResourceId(
                 "expected resource ID".to_string(),
             )),
+            ..Default::default()
         }));
         assert!(
             matches!(result, Err(ref e) if *e.kind() == azure_core::error::ErrorKind::Credential),
@@ -484,6 +565,11 @@ mod tests {
             ..Default::default()
         }))
         .await;
+    }
+
+    #[tokio::test]
+    async fn imds_error_response() {
+        run_error_response_test(ManagedIdentitySource::Imds).await
     }
 
     #[tokio::test]

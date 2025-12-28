@@ -17,9 +17,8 @@ use azure_messaging_eventhubs::{
 };
 use azure_storage_blob::{
     models::{
-        BlobClientGetPropertiesResultHeaders, BlobClientSetMetadataOptions,
-        BlobContainerClientListBlobFlatSegmentOptions, BlockBlobClientUploadOptions,
-        BlockBlobClientUploadResultHeaders, ListBlobsIncludeItem,
+        BlobClientSetMetadataOptions, BlobContainerClientListBlobFlatSegmentOptions,
+        BlockBlobClientUploadOptions, BlockBlobClientUploadResultHeaders, ListBlobsIncludeItem,
     },
     BlobContainerClient,
 };
@@ -69,16 +68,9 @@ impl BlobCheckpointStore {
         blob_name: &str,
         metadata: HashMap<String, String>,
     ) -> Result<(Option<OffsetDateTime>, Option<Etag>)> {
-        let blob_client = self
-            .blob_container_client
-            .blob_client(blob_name.to_string());
+        let blob_client = self.blob_container_client.blob_client(blob_name);
 
-        let options = BlobClientSetMetadataOptions {
-            metadata: Some(metadata.clone()),
-            ..Default::default()
-        };
-
-        let result = blob_client.set_metadata(Some(options)).await;
+        let result = blob_client.set_metadata(metadata.clone(), None).await;
         match result {
             Ok(r) => Ok(Self::process_storage_response_metadata(
                 r.headers().get_optional_string(&LAST_MODIFIED),
@@ -112,21 +104,20 @@ impl BlobCheckpointStore {
         metadata: Option<HashMap<String, String>>,
         etag: Option<Etag>,
     ) -> Result<(Option<OffsetDateTime>, Option<Etag>)> {
-        let blob_client = self
-            .blob_container_client
-            .blob_client(blob_name.to_string());
+        let blob_client = self.blob_container_client.blob_client(blob_name);
 
         if etag.is_some() {
             debug!(
                 "{:?} claiming ownership for {} with etag {:?}",
                 metadata, blob_name, etag
             );
-            let mut options = BlobClientSetMetadataOptions::default();
-            if let Some(metadata) = &metadata {
-                options.metadata = Some(metadata.clone());
-            }
-            options.if_match = etag.map(|ref e| e.to_string());
-            let result = blob_client.set_metadata(Some(options)).await?;
+            let options = BlobClientSetMetadataOptions {
+                if_match: etag.map(|e| e.to_string()),
+                ..Default::default()
+            };
+            let result = blob_client
+                .set_metadata(metadata.unwrap_or_default(), Some(options))
+                .await?;
             return Self::process_storage_response_metadata(
                 result.headers().get_optional_string(&LAST_MODIFIED),
                 result.headers().get_optional_string(&ETAG),
@@ -137,7 +128,7 @@ impl BlobCheckpointStore {
         let blob_content = RequestContent::<Bytes, NoFormat>::from(Vec::new());
         let options = BlockBlobClientUploadOptions {
             metadata: metadata.clone(),
-            if_match: Some("*".to_string()), // Upload without an etag, creating a new blob
+            if_none_match: Some("*".to_string()), // Upload without an etag, creating a new blob
             ..Default::default()
         };
 
@@ -243,35 +234,31 @@ impl CheckpointStore for BlobCheckpointStore {
         };
 
         while let Some(blob) = blobs.try_next().await? {
-            let blob_body = blob.into_body().await?;
-            debug!("Blob body: {blob_body:?}, {:?}", blob_body.container_name);
-            for blob in blob_body.segment.blob_items.iter() {
-                let mut checkpoint = checkpoint.clone();
-                if let Some(name) = &blob.name {
-                    if let Some(name) = &name.content {
-                        checkpoint.partition_id = name
-                            .rfind('/')
-                            .map(|pos| &name[pos + 1..])
-                            .unwrap_or_default()
-                            .to_string();
-                        // Since the current blob container client doesn't actually return the metadata, we
-                        // get it from the blob client instead.
-                        let blob = self
-                            .blob_container_client
-                            .blob_client(name.clone())
-                            .get_properties(None)
-                            .await?;
-                        if let Some(offset) = blob.metadata()?.get(OFFSET) {
-                            checkpoint.offset = Some(offset.clone());
-                        }
-                        if let Some(sequence_number) = blob.metadata()?.get(SEQUENCE_NUMBER) {
+            debug!("Blob body: {blob:?}");
+            let mut checkpoint = checkpoint.clone();
+            if let Some(name) = &blob.name {
+                if let Some(name) = &name.content {
+                    checkpoint.partition_id = name
+                        .rfind('/')
+                        .map(|pos| &name[pos + 1..])
+                        .unwrap_or_default()
+                        .to_string();
+                    if let Some(additional_properties) = blob
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.additional_properties.as_ref())
+                    {
+                        if let Some(sequence_number) = additional_properties.get(SEQUENCE_NUMBER) {
                             checkpoint.sequence_number = Some(sequence_number.parse()?);
+                        }
+                        if let Some(offset) = additional_properties.get(OFFSET) {
+                            checkpoint.offset = Some(offset.clone());
                         }
                     }
                 }
-
-                checkpoints.push(checkpoint);
             }
+
+            checkpoints.push(checkpoint);
         }
 
         debug!("Found {} checkpoints", checkpoints.len());
@@ -311,37 +298,28 @@ impl CheckpointStore for BlobCheckpointStore {
         };
 
         while let Some(blob) = blobs.try_next().await? {
-            let blob_body = blob.into_body().await?;
-            debug!("Blob body: {blob_body:?}, {:?}", blob_body.container_name);
-            for blob in blob_body.segment.blob_items.iter() {
-                let mut ownership = ownership.clone();
-                if let Some(name) = &blob.name {
-                    if let Some(name) = &name.content {
-                        ownership.partition_id = name
-                            .rfind('/')
-                            .map(|pos| &name[pos + 1..])
-                            .unwrap_or_default()
-                            .to_string();
-                        // Since the current blob container client doesn't actually return the metadata, we
-                        // get it from the blob client instead.
-                        let blob = self
-                            .blob_container_client
-                            .blob_client(name.clone())
-                            .get_properties(None)
-                            .await?;
-                        let metadata = blob.metadata()?;
-                        if let Some(owner_id) = metadata.get(OWNER_ID) {
-                            ownership.owner_id = Some(owner_id.clone());
-                        }
-                    }
+            debug!("Blob body: {blob:?}");
+            let mut ownership = ownership.clone();
+            if let Some(name) = &blob.name {
+                if let Some(name) = &name.content {
+                    ownership.partition_id = name
+                        .rfind('/')
+                        .map(|pos| &name[pos + 1..])
+                        .unwrap_or_default()
+                        .to_string();
+                    ownership.owner_id = blob
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.additional_properties.as_ref())
+                        .and_then(|ap| ap.get(OWNER_ID).cloned());
                 }
-                if let Some(properties) = &blob.properties {
-                    ownership.etag = properties.etag.as_ref().map(|s| Etag::from(s.clone()));
-                    ownership.last_modified_time = properties.last_modified;
-                }
-
-                ownerships.push(ownership);
             }
+            if let Some(properties) = &blob.properties {
+                ownership.etag = properties.etag.as_ref().map(|s| Etag::from(s.clone()));
+                ownership.last_modified_time = properties.last_modified;
+            }
+
+            ownerships.push(ownership);
         }
 
         debug!("Found {} ownerships", ownerships.len());

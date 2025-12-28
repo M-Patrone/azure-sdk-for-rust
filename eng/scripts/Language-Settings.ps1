@@ -1,7 +1,7 @@
 $Language = "rust"
 $LanguageDisplayName = "Rust"
 $PackageRepository = "crates.io"
-$packagePattern = "Cargo.toml"
+$packagePattern = "*.crate"
 #$MetadataUri = "https://raw.githubusercontent.com/Azure/azure-sdk/main/_data/releases/latest/rust-packages.csv"
 $GithubUri = "https://github.com/Azure/azure-sdk-for-rust"
 $PackageRepositoryUri = "https://crates.io/crates"
@@ -44,12 +44,25 @@ function Get-AllPackageInfoFromRepo ([string] $ServiceDirectory) {
       $searchPath = Join-Path $searchPath $ServiceDirectory -Resolve
     }
 
-    # when a package is marked `publish = false` in the Cargo.toml, `cargo metadata` returns an empty array for
-    # `publish`, otherwise it returns null. We only want to include packages where `publish` is null.
+    # Enumerate packages that do not have "test" as an independent word in the
+    # name.
+    # Examples:
+    # "azure_core" - included
+    # "azure_core_test" - excluded
+    # "azure_attestation" - included
     $packages = Invoke-LoggedCommand "cargo metadata --format-version 1 --no-deps" -GroupOutput
     | ConvertFrom-Json -AsHashtable
     | Select-Object -ExpandProperty packages
-    | Where-Object { $_.manifest_path.StartsWith($searchPath) -and $null -eq $_.publish }
+    | Where-Object {
+      $_.manifest_path.StartsWith($searchPath) `
+        -and ("test" -notin ($_.name -split '_')) `
+        -and ($null -eq $_.publish)
+    }
+
+    if (!$packages) {
+      LogWarning "No publishable packages found in service directory: $ServiceDirectory"
+      return @()
+    }
 
     $packageManifests = @{}
     foreach ($package in $packages) {
@@ -120,7 +133,7 @@ function Get-AllPackageInfoFromRepo ([string] $ServiceDirectory) {
 function Get-rust-AdditionalValidationPackagesFromPackageSet ($packagesWithChanges, $diff, $allPackageProperties) {
   # if the change was in a service directory, but not in a package directory, test all the packages in the service directory
   [array]$serviceFiles = ($diff.ChangedFiles + $diff.DeletedFiles) | ForEach-Object { $_ -replace '\\', '/' } | Where-Object { $_ -match "^sdk/.+/" }
-  
+
   # remove files that target any specific package
   foreach ($package in $allPackageProperties) {
     $packagePathPattern = "^$( [Regex]::Escape($package.DirectoryPath.Replace('\', '/')) )/"
@@ -139,15 +152,32 @@ function Get-rust-AdditionalValidationPackagesFromPackageSet ($packagesWithChang
   return $additionalPackages ?? @()
 }
 
+# $GetPackageInfoFromPackageFileFn = "Get-${Language}-PackageInfoFromPackageFile"
 function Get-rust-PackageInfoFromPackageFile([IO.FileInfo]$pkg, [string]$workingDirectory) {
-  #$pkg will be a FileInfo object for the Cargo.toml file in a package artifact directory
-  $package = cargo read-manifest --manifest-path $pkg.FullName | ConvertFrom-Json
+  # Create a temporary folder for extraction
+  $extractionPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), [System.IO.Path]::GetRandomFileName())
+  New-Item -ItemType Directory -Path $extractionPath | Out-Null
+
+  # Extract the .crate file (which is a tarball) to the temporary folder
+  tar -xvf $pkg.FullName -C $extractionPath
+  $cargoTomlPath = [System.IO.Path]::Combine($extractionPath, $pkg.BaseName, 'Cargo.toml')
+
+  Write-Host "Reading package info from $cargoTomlPath"
+  if (!(Test-Path $cargoTomlPath)) {
+    $message = "The Cargo.toml file was not found in the package artifact at $cargoTomlPath"
+    LogError $message
+    throw $message
+  }
+
+  $package = cargo read-manifest --manifest-path $cargoTomlPath | ConvertFrom-Json
 
   $packageName = $package.name
   $packageVersion = $package.version
 
-  $changeLogLoc = Get-ChildItem -Path $pkg.DirectoryName -Filter "CHANGELOG.md" | Select-Object -First 1
-  $readmeContentLoc = Get-ChildItem -Path $pkg.DirectoryName -Filter "README.md" | Select-Object -First 1
+  $packageAssetPath = [System.IO.Path]::Combine($extractionPath, "$packageName-$packageVersion")
+
+  $changeLogLoc = Get-ChildItem -Path $packageAssetPath -Filter "CHANGELOG.md" | Select-Object -First 1
+  $readmeContentLoc = Get-ChildItem -Path $packageAssetPath -Filter "README.md" | Select-Object -First 1
 
   if ($changeLogLoc) {
     $releaseNotes = Get-ChangeLogEntryAsString -ChangeLogLocation $changeLogLoc -VersionString $packageVersion

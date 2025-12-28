@@ -8,9 +8,12 @@ pub use instrumentation::*;
 use std::sync::Arc;
 use typespec_client_core::http::policies::Policy;
 pub use typespec_client_core::http::{
-    ClientMethodOptions, ExponentialRetryOptions, FixedRetryOptions, RetryOptions, TransportOptions,
+    ClientMethodOptions, ExponentialRetryOptions, FixedRetryOptions, LoggingOptions,
+    PipelineOptions, RetryOptions, Transport,
 };
 pub use user_agent::*;
+
+use crate::cloud::CloudConfiguration;
 
 /// Client options allow customization of general client policies, retry options, and more.
 #[derive(Clone, Debug, Default)]
@@ -22,19 +25,27 @@ pub struct ClientOptions {
     pub per_try_policies: Vec<Arc<dyn Policy>>,
 
     /// Retry options.
-    pub retry: Option<RetryOptions>,
+    pub retry: RetryOptions,
 
     /// Transport options.
-    pub transport: Option<TransportOptions>,
+    pub transport: Option<Transport>,
 
     /// User-Agent telemetry options.
-    pub user_agent: Option<UserAgentOptions>,
+    pub user_agent: UserAgentOptions,
 
     /// Options for request instrumentation, such as distributed tracing.
     ///
     /// If not specified, defaults to no instrumentation.
     ///
-    pub instrumentation: Option<InstrumentationOptions>,
+    pub instrumentation: InstrumentationOptions,
+
+    /// Logging options
+    ///
+    /// Specifies which headers and query parameters should be logged. All headers and query parameters not in the allow list will be redacted.
+    pub logging: LoggingOptions,
+
+    /// Cloud configuration for the client. If None, the client will default to Azure Public Cloud.
+    pub cloud: Option<Arc<CloudConfiguration>>,
 }
 
 pub(crate) struct CoreClientOptions {
@@ -54,12 +65,13 @@ impl ClientOptions {
             per_try_policies: self.per_try_policies,
             retry: self.retry,
             transport: self.transport,
+            logging: self.logging,
         };
 
         (
             CoreClientOptions {
-                user_agent: self.user_agent.unwrap_or_default(),
-                instrumentation: self.instrumentation.unwrap_or_default(),
+                user_agent: self.user_agent,
+                instrumentation: self.instrumentation,
             },
             options,
         )

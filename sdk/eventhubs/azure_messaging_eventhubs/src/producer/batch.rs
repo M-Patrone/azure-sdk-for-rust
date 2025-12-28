@@ -1,13 +1,11 @@
 // Copyright (c) Microsoft Corporation. All Rights reserved
 // Licensed under the MIT license.
 
-use std::sync::Mutex;
-
 use super::ProducerClient;
-
-use crate::models::EventData;
-use azure_core::{error::Result, http::Url, Error, Uuid};
+use crate::{error::Result, models::EventData, EventHubsError};
+use azure_core::{http::Url, Error, Uuid};
 use azure_core_amqp::{AmqpMessage, AmqpSenderApis, AmqpSymbol};
+use std::sync::Mutex;
 use tracing::debug;
 
 /// Represents the options that can be set when adding event data to an [`EventDataBatch`].
@@ -30,7 +28,6 @@ struct EventDataBatchState {
 ///
 /// ``` no_run
 /// # use azure_messaging_eventhubs::ProducerClient;
-/// # use azure_identity::TokenCredentialOptions;
 ///
 /// # async fn send_event_batch() -> Result<(), Box<dyn std::error::Error>> {
 /// # let credentials = azure_identity::DeveloperToolsCredential::new(None)?;
@@ -79,7 +76,7 @@ impl<'a> EventDataBatch<'a> {
     pub(crate) async fn attach(&mut self) -> Result<()> {
         let sender = self.producer.ensure_sender(self.get_batch_path()?).await?;
         self.max_size_in_bytes = sender.max_message_size().await?.ok_or_else(|| {
-            Error::message(
+            Error::with_message(
                 azure_core::error::ErrorKind::Other,
                 "No message size available.",
             )
@@ -118,11 +115,8 @@ impl<'a> EventDataBatch<'a> {
         self.len() == 0
     }
 
-    fn arithmetic_error() -> azure_core::Error {
-        azure_core::Error::message(
-            azure_core::error::ErrorKind::DataConversion,
-            "Arithmetic error calculating Batch size.",
-        )
+    fn arithmetic_error() -> EventHubsError {
+        EventHubsError::with_message("Arithmetic error calculating Batch size.")
     }
 
     fn calculate_actual_size_for_payload(length: usize) -> Result<u64> {
@@ -224,7 +218,8 @@ impl<'a> EventDataBatch<'a> {
         #[allow(unused_variables)] options: Option<AddEventDataOptions>,
     ) -> Result<bool> {
         let mut message = message.into();
-        if message.properties().is_none() || message.properties().unwrap().message_id.is_none() {
+        if message.properties.is_none() || message.properties.as_ref().unwrap().message_id.is_none()
+        {
             message.set_message_id(Uuid::new_v4());
         }
         if let Some(partition_key) = self.partition_key.as_ref() {
@@ -296,7 +291,7 @@ impl<'a> EventDataBatch<'a> {
         if let Some(partition_id) = self.partition_id.as_ref() {
             let batch_path = format!("{}/Partitions/{}", self.producer.base_url(), partition_id);
 
-            Url::parse(&batch_path).map_err(azure_core::Error::from)
+            Url::parse(&batch_path).map_err(|e| azure_core::Error::from(e).into())
         } else {
             Ok(self.producer.base_url().clone())
         }
@@ -307,23 +302,23 @@ impl<'a> EventDataBatch<'a> {
         // Do NOT transfer the body, that will be handled later.
         let mut batch_builder = AmqpMessage::builder();
 
-        if let Some(message_header) = message.header() {
+        if let Some(message_header) = message.header.as_ref() {
             batch_builder = batch_builder.with_header(message_header.clone());
         }
-        if let Some(message_properties) = message.properties() {
+        if let Some(message_properties) = message.properties.as_ref() {
             batch_builder = batch_builder.with_properties(message_properties.clone());
         }
-        if let Some(application_properties) = message.application_properties() {
+        if let Some(application_properties) = message.application_properties.as_ref() {
             batch_builder =
                 batch_builder.with_application_properties(application_properties.clone());
         }
-        if let Some(delivery_annotations) = message.delivery_annotations() {
+        if let Some(delivery_annotations) = message.delivery_annotations.as_ref() {
             batch_builder = batch_builder.with_delivery_annotations(delivery_annotations.clone());
         }
-        if let Some(message_annotations) = message.message_annotations() {
+        if let Some(message_annotations) = message.message_annotations.as_ref() {
             batch_builder = batch_builder.with_message_annotations(message_annotations.clone());
         }
-        if let Some(footer) = message.footer() {
+        if let Some(footer) = message.footer.as_ref() {
             batch_builder = batch_builder.with_footer(footer.clone());
         }
 

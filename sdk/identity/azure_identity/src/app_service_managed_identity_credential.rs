@@ -1,10 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-use crate::{ImdsId, ImdsManagedIdentityCredential, TokenCredentialOptions};
+use crate::env::Env;
+use crate::{ImdsId, ImdsManagedIdentityCredential};
 use azure_core::credentials::{AccessToken, TokenCredential, TokenRequestOptions};
 use azure_core::error::{ErrorKind, ResultExt};
 use azure_core::http::headers::HeaderName;
+use azure_core::http::ClientOptions;
 use azure_core::http::Url;
 use std::sync::Arc;
 
@@ -21,19 +23,18 @@ pub(crate) struct AppServiceManagedIdentityCredential {
 impl AppServiceManagedIdentityCredential {
     pub fn new(
         id: ImdsId,
-        options: impl Into<TokenCredentialOptions>,
+        client_options: ClientOptions,
+        env: Env,
     ) -> azure_core::Result<Arc<Self>> {
-        let options = options.into();
-        let env = options.env();
         let endpoint = &env
             .var(ENDPOINT_ENV)
-            .with_context(ErrorKind::Credential, || {
+            .with_context_fn(ErrorKind::Credential, || {
                 format!(
                     "app service credential requires {} environment variable",
                     ENDPOINT_ENV
                 )
             })?;
-        let endpoint = Url::parse(endpoint).with_context(ErrorKind::Credential, || {
+        let endpoint = Url::parse(endpoint).with_context_fn(ErrorKind::Credential, || {
             format!(
                 "app service credential {} environment variable must be a valid URL, but is '{endpoint}'",
                 ENDPOINT_ENV
@@ -41,12 +42,14 @@ impl AppServiceManagedIdentityCredential {
         })?;
         Ok(Arc::new(Self {
             credential: ImdsManagedIdentityCredential::new(
-                options,
                 endpoint,
                 API_VERSION,
                 SECRET_HEADER,
                 SECRET_ENV,
                 id,
+                client_options,
+                None,
+                env,
             ),
         }))
     }
@@ -58,7 +61,7 @@ impl TokenCredential for AppServiceManagedIdentityCredential {
     async fn get_token(
         &self,
         scopes: &[&str],
-        options: Option<TokenRequestOptions>,
+        options: Option<TokenRequestOptions<'_>>,
     ) -> azure_core::Result<AccessToken> {
         self.credential.get_token(scopes, options).await
     }

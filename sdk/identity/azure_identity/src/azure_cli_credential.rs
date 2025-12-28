@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 
 use crate::{
+    authentication_error,
     env::Env,
     process::{new_executor, shell_exec, Executor, OutputProcessor},
-    validate_scope, validate_subscription, validate_tenant_id, TokenCredentialOptions,
+    validate_scope, validate_subscription, validate_tenant_id,
 };
 use azure_core::{
     credentials::{AccessToken, Secret, TokenCredential, TokenRequestOptions},
@@ -34,10 +35,10 @@ impl CliTokenResponse {
     pub fn expires_on(&self) -> azure_core::Result<OffsetDateTime> {
         match self.expires_on {
             Some(timestamp) => Ok(OffsetDateTime::from_unix_timestamp(timestamp)
-                .with_context(ErrorKind::DataConversion, || {
+                .with_context_fn(ErrorKind::DataConversion, || {
                     format!("unable to parse expires_on '{timestamp}'")
                 })?),
-            None => Err(Error::message(
+            None => Err(Error::with_message(
                 ErrorKind::DataConversion,
                 "expires_on field not found. Please use Azure CLI 2.54.0 or newer.",
             )),
@@ -134,7 +135,7 @@ impl TokenCredential for AzureCliCredential {
     async fn get_token(
         &self,
         scopes: &[&str],
-        _: Option<TokenRequestOptions>,
+        _: Option<TokenRequestOptions<'_>>,
     ) -> azure_core::Result<AccessToken> {
         if scopes.is_empty() {
             return Err(Error::new(
@@ -158,16 +159,9 @@ impl TokenCredential for AzureCliCredential {
 
         trace!("running Azure CLI command: {command:?}");
 
-        shell_exec::<CliTokenResponse>(self.executor.clone(), &self.env, &command).await
-    }
-}
-
-impl From<TokenCredentialOptions> for AzureCliCredentialOptions {
-    fn from(options: TokenCredentialOptions) -> Self {
-        Self {
-            executor: Some(options.executor.clone()),
-            ..Default::default()
-        }
+        shell_exec::<CliTokenResponse>(self.executor.clone(), &self.env, &command)
+            .await
+            .map_err(|err| authentication_error(stringify!(AzureCliCredential), err))
     }
 }
 

@@ -3,12 +3,20 @@
 
 #![cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 
-use azure_core::{http::StatusCode, Result};
-use azure_core_test::{recorded, ErrorKind, TestContext, TestMode, SANITIZE_BODY_NAME};
+use azure_core::{
+    http::{Method, StatusCode},
+    Result,
+};
+use azure_core_test::{
+    recorded,
+    tracing::{ExpectedApiInformation, ExpectedInstrumentation, ExpectedRestApiSpan},
+    ErrorKind, TestContext, TestMode, SANITIZE_BODY_NAME,
+};
 use azure_security_keyvault_certificates::{
     models::{
-        CertificatePolicy, CreateCertificateParameters, CurveName, IssuerParameters, KeyProperties,
-        KeyType, UpdateCertificatePropertiesParameters, X509CertificateProperties,
+        CertificateClientUpdateCertificatePropertiesOptions, CertificatePolicy,
+        CreateCertificateParameters, CurveName, IssuerParameters, KeyProperties, KeyType,
+        UpdateCertificatePropertiesParameters, X509CertificateProperties,
     },
     CertificateClient, CertificateClientOptions, ResourceExt as _,
 };
@@ -53,22 +61,77 @@ async fn certificate_roundtrip(ctx: TestContext) -> Result<()> {
         certificate_policy: Some(DEFAULT_CERTIFICATE_POLICY.clone()),
         ..Default::default()
     };
-    client
-        .begin_create_certificate("certificate-roundtrip", body.try_into()?, None)?
-        .wait()
-        .await?;
+    let certificate = client
+        .create_certificate("certificate-roundtrip", body.try_into()?, None)?
+        .await?
+        .into_model()?;
 
     // Get the latest version of the certificate we just created.
-    let certificate = client
-        .get_certificate("certificate-roundtrip", "", None)
-        .await?
-        .into_body()
-        .await?;
     let version = certificate.resource_id()?.version;
 
     assert!(certificate.id.is_some());
     assert!(version.is_some());
 
+    Ok(())
+}
+
+#[recorded::test]
+async fn certificate_validate_instrumentation(ctx: TestContext) -> Result<()> {
+    let recording = ctx.recording();
+    recording.remove_sanitizers(&[SANITIZE_BODY_NAME]).await?;
+
+    let mut options = CertificateClientOptions::default();
+    recording.instrument(&mut options.client_options);
+
+    azure_core_test::tracing::assert_instrumentation_information(
+        |tracer_provider| {
+            options.client_options.instrumentation.tracer_provider = Some(tracer_provider);
+            let client = CertificateClient::new(
+                recording.var("AZURE_KEYVAULT_URL", None).as_str(),
+                recording.credential(),
+                Some(options),
+            )?;
+            Ok(client)
+        },
+        async move |client| {
+            // Create a self-signed certificate.
+            let body = CreateCertificateParameters {
+                certificate_policy: Some(DEFAULT_CERTIFICATE_POLICY.clone()),
+                ..Default::default()
+            };
+            let _certificate = client
+                .create_certificate(
+                    "certificate-validate-instrumentation",
+                    body.try_into()?,
+                    None,
+                )?
+                .await?
+                .into_model()?;
+            Ok(())
+        },
+        ExpectedInstrumentation {
+            package_name: recording.var("CARGO_PKG_NAME", None),
+            package_namespace: Some("KeyVault"),
+            package_version: env!("CARGO_PKG_VERSION").into(),
+            api_calls: vec![ExpectedApiInformation {
+                api_name: Some("KeyVault.createCertificate"),
+                api_children: vec![
+                    ExpectedRestApiSpan {
+                        api_verb: Method::Post,
+                        expected_status_code: StatusCode::Accepted,
+                        is_wildcard: false,
+                    },
+                    ExpectedRestApiSpan {
+                        api_verb: Method::Get,
+                        expected_status_code: StatusCode::Ok,
+                        is_wildcard: true,
+                    },
+                ],
+                ..Default::default()
+            }],
+        },
+    )
+    .await?;
     Ok(())
 }
 
@@ -91,18 +154,13 @@ async fn update_certificate_properties(ctx: TestContext) -> Result<()> {
         certificate_policy: Some(DEFAULT_CERTIFICATE_POLICY.clone()),
         ..Default::default()
     };
-    client
-        .begin_create_certificate("update-properties", body.try_into()?, None)?
-        .wait()
-        .await?;
+    let certificate = client
+        .create_certificate("update-properties", body.try_into()?, None)?
+        .await?
+        .into_model()?;
 
     // Get the latest version of the certificate we just created.
-    let certificate = client
-        .get_certificate("update-properties", "", None)
-        .await?
-        .into_body()
-        .await?;
-    let version = certificate.resource_id()?.version;
+    let certificate_version = certificate.resource_id()?.version;
 
     // Update certificate properties.
     let parameters = UpdateCertificatePropertiesParameters {
@@ -116,13 +174,14 @@ async fn update_certificate_properties(ctx: TestContext) -> Result<()> {
     let certificate = client
         .update_certificate_properties(
             "update-properties",
-            version.as_deref().unwrap_or(""),
             parameters.try_into()?,
-            None,
+            Some(CertificateClientUpdateCertificatePropertiesOptions {
+                certificate_version,
+                ..Default::default()
+            }),
         )
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
 
     assert_eq!(
         certificate.tags.expect("expected tags").get("test-name"),
@@ -153,16 +212,14 @@ async fn list_certificates(ctx: TestContext) -> Result<()> {
         ..Default::default()
     };
     client
-        .begin_create_certificate("list-certificates-1", body.clone().try_into()?, None)?
-        .wait()
+        .create_certificate("list-certificates-1", body.clone().try_into()?, None)?
         .await?;
     client
-        .begin_create_certificate("list-certificates-2", body.try_into()?, None)?
-        .wait()
+        .create_certificate("list-certificates-2", body.try_into()?, None)?
         .await?;
 
     // List certificates.
-    let mut pager = client.list_certificate_properties(None)?.into_stream();
+    let mut pager = client.list_certificate_properties(None)?;
     while let Some(certificate) = pager.try_next().await? {
         // Get the certificate name from the ID.
         let name = certificate.resource_id()?.name;
@@ -196,8 +253,7 @@ async fn purge_certificate(ctx: TestContext) -> Result<()> {
     };
     const NAME: &str = "purge-certificate";
     client
-        .begin_create_certificate(NAME, body.try_into()?, None)?
-        .wait()
+        .create_certificate(NAME, body.try_into()?, None)?
         .await?;
 
     // Delete the certificate.
@@ -212,11 +268,11 @@ async fn purge_certificate(ctx: TestContext) -> Result<()> {
     loop {
         match client.purge_deleted_certificate(NAME.as_ref(), None).await {
             Ok(_) => {
-                println!("{NAME} has been purged");
+                tracing::debug!("{NAME} has been purged");
                 break;
             }
             Err(err) if matches!(err.http_status(), Some(StatusCode::Conflict)) => {
-                println!(
+                tracing::debug!(
                     "Retrying in {} seconds",
                     retry.duration().unwrap_or_default().as_secs_f32()
                 );
@@ -256,7 +312,7 @@ async fn sign_jwt_with_ec_certificate(ctx: TestContext) -> Result<()> {
             ..Default::default()
         }),
         key_properties: Some(KeyProperties {
-            key_type: Some(KeyType::EC),
+            key_type: Some(KeyType::Ec),
             curve: Some(CurveName::P256),
             ..Default::default()
         }),
@@ -270,8 +326,7 @@ async fn sign_jwt_with_ec_certificate(ctx: TestContext) -> Result<()> {
     };
     const NAME: &str = "ec-certificate-signer";
     client
-        .begin_create_certificate(NAME, body.try_into()?, None)?
-        .wait()
+        .create_certificate(NAME, body.try_into()?, None)?
         .await?;
 
     let mut key_options = KeyClientOptions::default();
@@ -290,67 +345,16 @@ async fn sign_jwt_with_ec_certificate(ctx: TestContext) -> Result<()> {
     let digest = sha256(JWT).to_vec();
 
     let body = SignParameters {
-        algorithm: Some(SignatureAlgorithm::ES256),
+        algorithm: Some(SignatureAlgorithm::Es256),
         value: Some(digest),
     };
     let signature = key_client
-        .sign(NAME, "", body.try_into()?, None)
+        .sign(NAME, body.try_into()?, None)
         .await?
-        .into_body()
-        .await?;
+        .into_model()?;
     assert!(signature.result.is_some());
     // example: 6AIg-utePBdmCU-uGvpjh4uKb3UV0yvdWKNLSp-EivC4oavdqpfxmfMB9GsR6dBMM1Ekp8ZBrzUMaCvShXWyog
     // cspell:enable
-
-    Ok(())
-}
-
-#[recorded::test]
-async fn get_certificate_operation(ctx: TestContext) -> Result<()> {
-    let recording = ctx.recording();
-    recording.remove_sanitizers(&[SANITIZE_BODY_NAME]).await?;
-
-    let mut options = CertificateClientOptions::default();
-    recording.instrument(&mut options.client_options);
-
-    let client = CertificateClient::new(
-        recording.var("AZURE_KEYVAULT_URL", None).as_str(),
-        recording.credential(),
-        Some(options),
-    )?;
-
-    const CERTIFICATE_NAME: &str = "get-certificate-operation";
-
-    // Start creating a self-signed certificate but do not wait until completed.
-    let body = CreateCertificateParameters {
-        certificate_policy: Some(DEFAULT_CERTIFICATE_POLICY.clone()),
-        ..Default::default()
-    };
-    client
-        .begin_create_certificate(CERTIFICATE_NAME, body.try_into()?, None)?
-        // Request not sent until first execution of pipeline.
-        .try_next()
-        .await?;
-
-    // Now get and wait on the pending operation.
-    let operation = client
-        .resume_certificate_operation(CERTIFICATE_NAME, None)?
-        .wait()
-        .await?
-        .into_body()
-        .await?;
-    assert_eq!(operation.status, Some("completed".into()));
-
-    // Get the latest version of the certificate we just created.
-    let certificate = client
-        .get_certificate(CERTIFICATE_NAME, "", None)
-        .await?
-        .into_body()
-        .await?;
-    let version = certificate.resource_id()?.version;
-
-    assert!(certificate.id.is_some());
-    assert!(version.is_some());
 
     Ok(())
 }
@@ -374,8 +378,7 @@ async fn create_invalid_certificate(ctx: TestContext) -> Result<()> {
         ..Default::default()
     };
     let err = client
-        .begin_create_certificate("create_invalid_certificate", body.try_into()?, None)?
-        .wait()
+        .create_certificate("create_invalid_certificate", body.try_into()?, None)?
         .await
         .expect_err("expected HTTP error");
 

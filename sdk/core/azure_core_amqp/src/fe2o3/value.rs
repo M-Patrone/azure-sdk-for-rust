@@ -139,8 +139,8 @@ impl From<&AmqpSimpleValue> for fe2o3_amqp_types::primitives::SimpleValue {
             ),
             AmqpSimpleValue::Described(d) => fe2o3_amqp_types::primitives::SimpleValue::Described(
                 Box::new(serde_amqp::described::Described {
-                    descriptor: d.descriptor().into(),
-                    value: d.value().into(),
+                    descriptor: (&d.descriptor).into(),
+                    value: (&d.value).into(),
                 }),
             ),
         }
@@ -190,8 +190,8 @@ impl From<AmqpSimpleValue> for fe2o3_amqp_types::primitives::SimpleValue {
             ),
             AmqpSimpleValue::Described(d) => fe2o3_amqp_types::primitives::SimpleValue::Described(
                 Box::new(serde_amqp::described::Described {
-                    descriptor: d.descriptor().into(),
-                    value: d.value().into(),
+                    descriptor: (&d.descriptor).into(),
+                    value: (&d.value).into(),
                 }),
             ),
         }
@@ -366,11 +366,11 @@ impl From<&AmqpValue> for fe2o3_amqp_types::primitives::Value {
             ),
             AmqpValue::Described(amqp_described) => fe2o3_amqp_types::primitives::Value::Described(
                 Box::new(serde_amqp::described::Described {
-                    descriptor: amqp_described.descriptor().into(),
-                    value: amqp_described.value().into(),
+                    descriptor: (&amqp_described.descriptor).into(),
+                    value: (&amqp_described.value).into(),
                 }),
             ),
-            #[cfg(feature = "cplusplus")]
+            #[cfg(feature = "ffi")]
             AmqpValue::Composite(amqp_composite) => fe2o3_amqp_types::primitives::Value::Described(
                 Box::new(serde_amqp::described::Described {
                     descriptor: amqp_composite.descriptor().into(),
@@ -423,7 +423,7 @@ impl From<AmqpValue> for fe2o3_amqp_types::primitives::Value {
             //
             // Iron Oxide does not directly support Composite types (they're handled via macros), so when a C++
             // component attempts to convert an AMQP Composite type to Iron Oxide, we convert it to a Described type
-            #[cfg(feature = "cplusplus")]
+            #[cfg(feature = "ffi")]
             AmqpValue::Composite(d) => fe2o3_amqp_types::primitives::Value::Described(Box::new(
                 serde_amqp::described::Described {
                     descriptor: d.descriptor().into(),
@@ -432,8 +432,8 @@ impl From<AmqpValue> for fe2o3_amqp_types::primitives::Value {
             )),
             AmqpValue::Described(d) => fe2o3_amqp_types::primitives::Value::Described(Box::new(
                 serde_amqp::described::Described {
-                    descriptor: d.descriptor().into(),
-                    value: d.value().into(),
+                    descriptor: (&d.descriptor).into(),
+                    value: (&d.value).into(),
                 },
             )),
         }
@@ -572,7 +572,7 @@ impl PartialEq<AmqpDescribed>
     for serde_amqp::described::Described<fe2o3_amqp_types::primitives::Value>
 {
     fn eq(&self, other: &AmqpDescribed) -> bool {
-        self.descriptor == *other.descriptor() && self.value == *other.value()
+        self.descriptor == other.descriptor && self.value == other.value
     }
 }
 
@@ -667,7 +667,7 @@ impl PartialEq<AmqpValue> for fe2o3_amqp_types::primitives::Value {
                 fe2o3_amqp_types::primitives::Value::Described(a) => **d == **a,
                 _ => false,
             },
-            #[cfg(feature = "cplusplus")]
+            #[cfg(feature = "ffi")]
             AmqpValue::Composite(_) => false,
 
             AmqpValue::Decimal128(d) => match self {
@@ -814,17 +814,19 @@ impl From<&fe2o3_amqp_types::definitions::ReceiverSettleMode> for crate::Receive
     }
 }
 
-impl From<Fe2o3SerializationError> for azure_core::Error {
+impl From<Fe2o3SerializationError> for AmqpError {
     fn from(err: Fe2o3SerializationError) -> Self {
         match err.0 {
-            serde_amqp::Error::Message(m) => azure_core::Error::message(ErrorKind::Amqp, m),
-            serde_amqp::Error::Io(error) => azure_core::Error::new(ErrorKind::Io, error),
+            serde_amqp::Error::Message(m) => {
+                azure_core::Error::with_message(ErrorKind::DataConversion, m).into()
+            }
+            serde_amqp::Error::Io(error) => azure_core::Error::new(ErrorKind::Io, error).into(),
             serde_amqp::Error::InvalidFormatCode
             | serde_amqp::Error::InvalidUtf8Encoding
             | serde_amqp::Error::SequenceLengthMismatch
             | serde_amqp::Error::InvalidLength
             | serde_amqp::Error::InvalidValue => {
-                AmqpError::from(AmqpErrorKind::TransportImplementationError(Box::new(err.0))).into()
+                AmqpError::from(AmqpErrorKind::TransportImplementationError(Box::new(err.0)))
             }
         }
     }

@@ -1,6 +1,39 @@
 # Release History
 
-## 0.7.0 (Unreleased)
+## 0.10.0 (Unreleased)
+
+### Features Added
+
+### Breaking Changes
+
+### Bugs Fixed
+
+### Other Changes
+
+## 0.9.0 (2025-11-11)
+
+### Breaking Changes
+
+- All Event Hubs APIs now return an `azure_messaging_eventhubs::EventHubError` instead of an `azure_core::Error`.
+- Several `azure_messaging_eventhubs::error::ErrorKind` enumerations have been removed because they are no longer needed.
+- Modified several errors which previously used `azure_core::Error::with_message` to use `azure_messaging_eventhubs::EventHubsError::with_message`, changing their underlying type.
+
+### Other Changes
+
+- Added `azure_messaging_eventhubs::error::ErrorKind::AmqpError`, `azure_messaging_eventhubs::error::ErrorKind::AzureCore`, and `azure_messaging_eventhubs::error::ErrorKind::SimpleMessage` to describe AMQP originated messages, Azure Core originated messages, and messages which just have a string value respectively.
+- Added `azure_messaging_eventhubs::Error::with_message` to enable simple error returns with a text message.
+
+## 0.8.0 (2025-10-08)
+
+### Breaking Changes
+
+- `EventProcessor` now consumes its `ConsumerClient` parameter rather than accepting a clone of an `Arc`.
+
+### Other Changes
+
+- Internal refactoring to ensure that the `close()` method on various clients works as expected.
+
+## 0.7.0 (2025-09-16)
 
 ### Features Added
 
@@ -11,10 +44,6 @@
 
 - `ProducerClient::send_batch` now consumes its `batch` argument.
 - `RetryOptions::max_retries` is a `u32` not a `usize`.
-
-### Bugs Fixed
-
-### Other Changes
 
 ## 0.6.0 (2025-08-05)
 

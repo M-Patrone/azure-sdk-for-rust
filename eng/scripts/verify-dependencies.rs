@@ -19,12 +19,22 @@ use std::{
 
 static EXEMPTIONS: &[(&str, &str)] = &[
     ("azure_core", "http"),
+    ("azure_core", "json-patch"),
     ("azure_core", "ureq"),
     ("azure_core_test", "dotenvy"),
-    ("azure_template", "serde"),
+    ("azure_canary", "serde"),
     ("azure_core_opentelemetry", "opentelemetry"),
     ("azure_core_opentelemetry", "opentelemetry_sdk"),
     ("azure_core_opentelemetry", "tracing-opentelemetry"),
+    (
+        "azure_messaging_eventhubs_checkpointstore_blob",
+        "opentelemetry-stdout",
+    ),
+    (
+        "azure_messaging_eventhubs_checkpointstore_blob",
+        "opentelemetry-appender-tracing",
+    ),
+    ("azure_data_cosmos_native", "cbindgen"),
 ];
 
 fn main() {

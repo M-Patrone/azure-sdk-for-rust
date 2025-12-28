@@ -31,20 +31,18 @@ fn parse_struct_expr(
     if struct_body.path.is_ident("Self") {
         let fields = struct_body.fields.iter();
         let tracer_init = quote! {
-            if let Some(tracer_options) = &options.client_options.instrumentation {
-                tracer_options
-                    .tracer_provider
-                    .as_ref()
-                    .map(|tracer_provider| {
-                        tracer_provider.get_tracer(
-                            Some(#client_namespace),
-                            option_env!("CARGO_PKG_NAME").unwrap_or("UNKNOWN"),
-                            option_env!("CARGO_PKG_VERSION"),
-                        )
-                    })
-            } else {
-                None
-            }
+            options
+                .client_options
+                .instrumentation
+                .tracer_provider
+                .as_ref()
+                .map(|tracer_provider| {
+                    tracer_provider.get_tracer(
+                        Some(#client_namespace),
+                        option_env!("CARGO_PKG_NAME").unwrap_or("UNKNOWN"),
+                        option_env!("CARGO_PKG_VERSION"),
+                    )
+                })
         };
         if is_ok {
             quote! {
@@ -502,22 +500,18 @@ mod tests {
                 };
 
                 Self {
-                    tracer: if let Some(tracer_options) =
-                        &options.client_options.instrumentation
-                    {
-                        tracer_options
-                            .tracer_provider
-                            .as_ref()
-                            .map(|tracer_provider| {
-                                tracer_provider.get_tracer(
-                                    Some("Az.Namespace"),
-                                    option_env!("CARGO_PKG_NAME").unwrap_or("UNKNOWN"),
-                                    option_env!("CARGO_PKG_VERSION"),
-                                )
-                            })
-                    } else {
-                        None
-                    },
+                    tracer: options
+                        .client_options
+                        .instrumentation
+                        .tracer_provider
+                        .as_ref()
+                        .map(|tracer_provider| {
+                            tracer_provider.get_tracer(
+                                Some("Az.Namespace"),
+                                option_env!("CARGO_PKG_NAME").unwrap_or("UNKNOWN"),
+                                option_env!("CARGO_PKG_VERSION"),
+                            )
+                        }),
                     name,
                     endpoint,
                 }
@@ -548,7 +542,7 @@ mod tests {
                     ));
                 }
                 endpoint.set_query(None);
-                let auth_policy: Arc<dyn Policy> = Arc::new(BearerTokenCredentialPolicy::new(
+                let auth_policy: Arc<dyn Policy> = Arc::new(BearerTokenAuthorizationPolicy::new(
                     credential,
                     vec!["https://vault.azure.net/.default"],
                 ));
@@ -587,27 +581,23 @@ mod tests {
                     ));
                 }
                 endpoint.set_query(None);
-                let auth_policy: Arc<dyn Policy> = Arc::new(BearerTokenCredentialPolicy::new(
+                let auth_policy: Arc<dyn Policy> = Arc::new(BearerTokenAuthorizationPolicy::new(
                     credential,
                     vec!["https://vault.azure.net/.default"],
                 ));
                 Ok(Self {
-                    tracer: if let Some(tracer_options) =
-                        &options.client_options.instrumentation
-                    {
-                        tracer_options
-                            .tracer_provider
-                            .as_ref()
-                            .map(|tracer_provider| {
-                                tracer_provider.get_tracer(
-                                    Some("Az.GeneratedNamespace"),
-                                    option_env!("CARGO_PKG_NAME").unwrap_or("UNKNOWN"),
-                                    option_env!("CARGO_PKG_VERSION"),
-                                )
-                            })
-                    } else {
-                        None
-                    },
+                    tracer: options
+                        .client_options
+                        .instrumentation
+                        .tracer_provider
+                        .as_ref()
+                        .map(|tracer_provider| {
+                            tracer_provider.get_tracer(
+                                Some("Az.GeneratedNamespace"),
+                                option_env!("CARGO_PKG_NAME").unwrap_or("UNKNOWN"),
+                                option_env!("CARGO_PKG_VERSION"),
+                            )
+                        }),
                     endpoint,
                     api_version: options.api_version,
                     pipeline: Pipeline::new(
@@ -645,7 +635,7 @@ mod tests {
                     ));
                 }
                 endpoint.set_query(None);
-                let auth_policy: Arc<dyn Policy> = Arc::new(BearerTokenCredentialPolicy::new(
+                let auth_policy: Arc<dyn Policy> = Arc::new(BearerTokenAuthorizationPolicy::new(
                     credential,
                     vec!["https://vault.azure.net/.default"],
                 ));
@@ -684,27 +674,23 @@ mod tests {
                     ));
                 }
                 endpoint.set_query(None);
-                let auth_policy: Arc<dyn Policy> = Arc::new(BearerTokenCredentialPolicy::new(
+                let auth_policy: Arc<dyn Policy> = Arc::new(BearerTokenAuthorizationPolicy::new(
                     credential,
                     vec!["https://vault.azure.net/.default"],
                 ));
                 Ok(Arc::new(Self {
-                    tracer: if let Some(tracer_options) =
-                        &options.client_options.instrumentation
-                    {
-                        tracer_options
-                            .tracer_provider
-                            .as_ref()
-                            .map(|tracer_provider| {
-                                tracer_provider.get_tracer(
-                                    Some("Az.GeneratedNamespace"),
-                                    option_env!("CARGO_PKG_NAME").unwrap_or("UNKNOWN"),
-                                    option_env!("CARGO_PKG_VERSION"),
-                                )
-                            })
-                    } else {
-                        None
-                    },
+                    tracer: options
+                        .client_options
+                        .instrumentation
+                        .tracer_provider
+                        .as_ref()
+                        .map(|tracer_provider| {
+                            tracer_provider.get_tracer(
+                                Some("Az.GeneratedNamespace"),
+                                option_env!("CARGO_PKG_NAME").unwrap_or("UNKNOWN"),
+                                option_env!("CARGO_PKG_VERSION"),
+                            )
+                        }),
                     endpoint,
                     api_version: options.api_version,
                     pipeline: Pipeline::new(

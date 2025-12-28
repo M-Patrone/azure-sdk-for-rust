@@ -5,7 +5,7 @@ use crate::{
     common::authorizer::Authorizer, ErrorKind, ReceiveMode, Receiver, Result, Sender,
     ServiceBusError,
 };
-use azure_core::{credentials::TokenCredential, fmt::SafeDebug, http::ClientOptions, http::Url};
+use azure_core::{credentials::TokenCredential, fmt::SafeDebug, http::Url};
 use azure_core_amqp::{
     AmqpConnection, AmqpConnectionApis, AmqpConnectionOptions, AmqpOrderedMap, AmqpSymbol,
     AmqpValue,
@@ -25,7 +25,7 @@ pub enum SubQueue {
 
 impl SubQueue {
     /// Returns the path suffix for the sub-queue.
-    pub fn as_path_suffix(&self) -> &'static str {
+    pub(crate) fn as_path_suffix(&self) -> &'static str {
         match self {
             SubQueue::DeadLetter => "/$DeadLetterQueue",
             SubQueue::Transfer => "/$Transfer/$DeadLetterQueue",
@@ -39,9 +39,6 @@ pub struct ServiceBusClientOptions {
     /// The API version to use when communicating with the Service Bus service.
     pub api_version: String,
 
-    /// Core client configuration options.
-    pub client_options: ClientOptions,
-
     /// Application ID that will be passed to the namespace.
     ///
     /// This optional identifier is passed to the Service Bus namespace during connection establishment
@@ -52,8 +49,7 @@ pub struct ServiceBusClientOptions {
 impl Default for ServiceBusClientOptions {
     fn default() -> Self {
         Self {
-            api_version: "2017-04".to_string(), // Default Service Bus API version
-            client_options: ClientOptions::default(),
+            api_version: "2021-05".to_string(), // Default Service Bus API version
             application_id: None,
         }
     }
@@ -314,12 +310,13 @@ impl ServiceBusClient {
 
     /// Authorizes access to a Service Bus entity path using the configured credential.
     /// This method is used internally by senders and receivers when authentication is required.
-    pub(crate) async fn authorize_path(&self, entity_path: &str) -> azure_core::Result<()> {
+    pub(crate) async fn authorize_path(&self, entity_path: &str) -> Result<()> {
         if let Some(ref authorizer) = self.authorizer {
             let entity_url = azure_core::http::Url::parse(&format!(
                 "amqps://{}:5671/{}",
                 self.namespace, entity_path
-            ))?;
+            ))
+            .map_err(azure_core::Error::from)?;
 
             authorizer
                 .authorize_path(&self.connection, &entity_url)

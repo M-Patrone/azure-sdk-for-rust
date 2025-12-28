@@ -78,7 +78,7 @@ mod tests {
     use azure_core_test::http::MockHttpClient;
     use futures::FutureExt;
     use std::sync::Arc;
-    use typespec_client_core::http::{policies::TransportPolicy, RawResponse, TransportOptions};
+    use typespec_client_core::http::{policies::TransportPolicy, AsyncRawResponse, Transport};
 
     #[tokio::test]
     async fn header_already_present() {
@@ -100,7 +100,7 @@ mod tests {
                     "Header value should not change"
                 );
 
-                Ok(RawResponse::from_bytes(
+                Ok(AsyncRawResponse::from_bytes(
                     StatusCode::Ok,
                     headers::Headers::new(),
                     Bytes::new(),
@@ -108,7 +108,7 @@ mod tests {
             }
             .boxed()
         }));
-        let transport = Arc::new(TransportPolicy::new(TransportOptions::new(transport)));
+        let transport = Arc::new(TransportPolicy::new(Transport::new(transport)));
         let ctx = Context::new();
 
         // Act
@@ -133,7 +133,7 @@ mod tests {
                     .expect("Header should be present");
                 assert!(!header_value.is_empty(), "Header value should be generated");
 
-                Ok(RawResponse::from_bytes(
+                Ok(AsyncRawResponse::from_bytes(
                     StatusCode::Ok,
                     headers::Headers::new(),
                     Bytes::new(),
@@ -141,7 +141,7 @@ mod tests {
             }
             .boxed()
         }));
-        let transport = Arc::new(TransportPolicy::new(TransportOptions::new(transport)));
+        let transport = Arc::new(TransportPolicy::new(Transport::new(transport)));
         let ctx = Context::new();
 
         // Act
@@ -174,7 +174,7 @@ mod tests {
                     "Custom header value should not change"
                 );
 
-                Ok(RawResponse::from_bytes(
+                Ok(AsyncRawResponse::from_bytes(
                     StatusCode::Ok,
                     headers::Headers::new(),
                     Bytes::new(),
@@ -182,7 +182,7 @@ mod tests {
             }
             .boxed()
         }));
-        let transport = Arc::new(TransportPolicy::new(TransportOptions::new(transport)));
+        let transport = Arc::new(TransportPolicy::new(Transport::new(transport)));
         let ctx = Context::new();
 
         // Act
@@ -214,7 +214,7 @@ mod tests {
                     "Header value should match the client request ID from the context"
                 );
 
-                Ok(RawResponse::from_bytes(
+                Ok(AsyncRawResponse::from_bytes(
                     StatusCode::Ok,
                     headers::Headers::new(),
                     Bytes::new(),
@@ -222,7 +222,7 @@ mod tests {
             }
             .boxed()
         }));
-        let transport = Arc::new(TransportPolicy::new(TransportOptions::new(transport)));
+        let transport = Arc::new(TransportPolicy::new(Transport::new(transport)));
 
         // Act
         policy

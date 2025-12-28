@@ -1,14 +1,43 @@
 # Release History
 
-## 0.7.0 (Unreleased)
+## 0.10.0 (Unreleased)
 
 ### Features Added
 
+- Added `continuation_token` to `PagerOptions` for methods that return a `Pager`.
+
 ### Breaking Changes
+
+- Removed `Pager::with_continuation_token()` for methods that return a `Pager`.
 
 ### Bugs Fixed
 
 ### Other Changes
+
+## 0.9.0 (2025-11-10)
+
+### Breaking Changes
+
+- `SecretClientListDeletedSecretPropertiesOptions::method_options` is now `PagerOptions`.
+- `SecretClientListSecretPropertiesOptions::method_options` is now `PagerOptions`.
+- `SecretClientListSecretPropertiesVersionsOptions::method_options` is now `PagerOptions`.
+- Renamed `Response<T, F>::into_body(self) -> Result<Response<T>>` to `into_model(self) -> Result<Response<T>>`. `into_body(self)` now returns a `ResponseBody`.
+
+## 0.8.0 (2025-10-07)
+
+### Breaking Changes
+
+- Client methods that return a `Response<T>>` asynchronously buffer the entire model within the internal pipeline, so `into_body()` and other methods on the response are no longer async.
+
+## 0.7.0 (2025-09-16)
+
+### Features Added
+
+- Updated to latest version of fixes for the "7.6" specification after TypeSpec migration.
+
+### Breaking Changes
+
+- Moved secret version parameters to client method options.
 
 ## 0.6.0 (2025-08-05)
 

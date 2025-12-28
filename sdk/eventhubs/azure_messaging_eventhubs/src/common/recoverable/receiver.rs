@@ -4,13 +4,13 @@
 use super::RecoverableConnection;
 use crate::common::recover_azure_operation;
 use crate::common::retry::ErrorRecoveryAction;
-use crate::{ErrorKind, EventHubsError};
-use azure_core::{error::ErrorKind as AzureErrorKind, error::Result, http::Url, time::Duration};
-use azure_core_amqp::{AmqpError, AmqpReceiverApis, AmqpReceiverOptions, AmqpSession, AmqpSource};
+use azure_core::{error::ErrorKind as AzureErrorKind, http::Url, time::Duration};
+use azure_core_amqp::{
+    error::Result, AmqpError, AmqpReceiverApis, AmqpReceiverOptions, AmqpSession, AmqpSource,
+};
 use futures::{select, FutureExt};
-use std::error::Error;
 use std::sync::Weak;
-use tracing::{debug, warn};
+use tracing::debug;
 
 pub(crate) struct RecoverableReceiver {
     recoverable_connection: Weak<RecoverableConnection>,
@@ -37,31 +37,14 @@ impl RecoverableReceiver {
         }
     }
 
-    fn should_retry_receive_operation(e: &azure_core::Error) -> ErrorRecoveryAction {
-        match e.kind() {
-            AzureErrorKind::Amqp => {
-                warn!(err=?e, "Amqp operation failed: {e}");
-                if let Some(e) = e.source() {
-                    debug!(err=?e, "Error: {e}");
+    fn should_retry_receive_operation(e: &AmqpError) -> ErrorRecoveryAction {
+        RecoverableConnection::should_retry_amqp_error(e)
+    }
+}
 
-                    if let Some(amqp_error) = e.downcast_ref::<Box<AmqpError>>() {
-                        RecoverableConnection::should_retry_amqp_error(amqp_error)
-                    } else if let Some(amqp_error) = e.downcast_ref::<AmqpError>() {
-                        RecoverableConnection::should_retry_amqp_error(amqp_error)
-                    } else {
-                        debug!(err=?e, "Non AMQP error: {e}");
-                        ErrorRecoveryAction::ReturnError
-                    }
-                } else {
-                    debug!("No source error found");
-                    ErrorRecoveryAction::ReturnError
-                }
-            }
-            _ => {
-                debug!(err=?e, "Non AMQP error: {e}");
-                ErrorRecoveryAction::ReturnError
-            }
-        }
+impl Drop for RecoverableReceiver {
+    fn drop(&mut self) {
+        debug!("Dropping RecoverableReceiver for {}", self.source_url);
     }
 }
 
@@ -77,58 +60,64 @@ impl AmqpReceiverApis for RecoverableReceiver {
         unimplemented!("AmqpReceiverClient does not support attach operation");
     }
 
-    async fn detach(self) -> azure_core::Result<()> {
+    async fn detach(self) -> Result<()> {
         unimplemented!("AmqpReceiverClient does not support detach operation");
     }
 
-    async fn set_credit_mode(
-        &self,
-        _mode: azure_core_amqp::ReceiverCreditMode,
-    ) -> azure_core::Result<()> {
+    async fn set_credit_mode(&self, _mode: azure_core_amqp::ReceiverCreditMode) -> Result<()> {
         unimplemented!("AmqpReceiverClient does not support set_credit_mode operation");
     }
 
-    async fn credit_mode(&self) -> azure_core::Result<azure_core_amqp::ReceiverCreditMode> {
+    async fn credit_mode(&self) -> Result<azure_core_amqp::ReceiverCreditMode> {
         unimplemented!("AmqpReceiverClient does not support credit_mode operation");
     }
 
-    async fn receive_delivery(&self) -> azure_core::Result<azure_core_amqp::AmqpDelivery> {
+    async fn receive_delivery(&self) -> Result<azure_core_amqp::AmqpDelivery> {
+        let retry_options = {
+            self.recoverable_connection
+                .upgrade()
+                .ok_or_else(|| AmqpError::with_message("Missing connection"))?
+                .retry_options
+                .clone()
+        };
         let delivery = recover_azure_operation(
             || async move {
-                let connection = self
-                    .recoverable_connection
-                    .upgrade()
-                    .ok_or_else(|| EventHubsError::from(ErrorKind::MissingConnection))?;
+                debug!("Starting receive_delivery operation");
+                let receiver = {
+                    let connection = self
+                        .recoverable_connection
+                        .upgrade()
+                        .ok_or_else(|| AmqpError::with_message("Missing connection"))?;
 
-                // Check for forced error.
-                #[cfg(test)]
-                connection.get_forced_error()?;
+                    // Check for forced error.
+                    #[cfg(test)]
+                    connection.get_forced_error()?;
 
-                let receiver = connection
-                    .ensure_receiver(
-                        &self.source_url,
-                        &self.message_source,
-                        &self.receiver_options,
-                    )
-                    .await?;
+                    connection
+                        .ensure_receiver(
+                            &self.source_url,
+                            &self.message_source,
+                            &self.receiver_options,
+                        )
+                        .await
+                        .map_err(|e| {
+                            AmqpError::with_message(format!("Failed to ensure receiver: {e}"))
+                        })?
+                };
                 if let Some(delivery_timeout) = self.timeout {
                     select! {
                         delivery = receiver.receive_delivery().fuse() => Ok(delivery),
                         _ = azure_core::sleep::sleep(delivery_timeout).fuse() => {
-                             Err(azure_core::Error::new(
+                             Err(AmqpError::from(azure_core::Error::new(
                                 AzureErrorKind::Io,
-                                Box::new(std::io::Error::from(std::io::ErrorKind::TimedOut))))
+                                Box::new(std::io::Error::from(std::io::ErrorKind::TimedOut)))))
                         },
                     }?
                 } else {
                     receiver.receive_delivery().await
                 }
             },
-            &self
-                .recoverable_connection
-                .upgrade()
-                .ok_or_else(|| EventHubsError::from(ErrorKind::MissingConnection))?
-                .retry_options,
+            &retry_options,
             Self::should_retry_receive_operation,
             Some(move |connection: Weak<RecoverableConnection>, reason| {
                 let connection = connection.clone();
@@ -143,24 +132,15 @@ impl AmqpReceiverApis for RecoverableReceiver {
         Ok(delivery)
     }
 
-    async fn accept_delivery(
-        &self,
-        _delivery: &azure_core_amqp::AmqpDelivery,
-    ) -> azure_core::Result<()> {
+    async fn accept_delivery(&self, _delivery: &azure_core_amqp::AmqpDelivery) -> Result<()> {
         unimplemented!("AmqpReceiverClient does not support accept_delivery operation");
     }
 
-    async fn reject_delivery(
-        &self,
-        _delivery: &azure_core_amqp::AmqpDelivery,
-    ) -> azure_core::Result<()> {
+    async fn reject_delivery(&self, _delivery: &azure_core_amqp::AmqpDelivery) -> Result<()> {
         unimplemented!("AmqpReceiverClient does not support reject_delivery operation");
     }
 
-    async fn release_delivery(
-        &self,
-        _delivery: &azure_core_amqp::AmqpDelivery,
-    ) -> azure_core::Result<()> {
+    async fn release_delivery(&self, _delivery: &azure_core_amqp::AmqpDelivery) -> Result<()> {
         unimplemented!("AmqpReceiverClient does not support release_delivery operation");
     }
 }

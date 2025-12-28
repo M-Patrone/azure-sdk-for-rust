@@ -1,14 +1,48 @@
 # Release History
 
-## 0.7.0 (Unreleased)
+## 0.10.0 (Unreleased)
 
 ### Features Added
 
+- Added `continuation_token` to `PagerOptions` for methods that return a `Pager`.
+
 ### Breaking Changes
+
+- Removed `Pager::with_continuation_token()` for methods that return a `Pager`.
 
 ### Bugs Fixed
 
 ### Other Changes
+
+## 0.9.0 (2025-11-10)
+
+### Breaking Changes
+
+- `KeyClientListDeletedKeyPropertiesOptions::method_options` is now `PagerOptions`.
+- `KeyClientListKeyPropertiesOptions::method_options` is now `PagerOptions`.
+- `KeyClientListKeyPropertiesVersionsOptions::method_options` is now `PagerOptions`.
+- Renamed `Response<T, F>::into_body(self) -> Result<Response<T>>` to `into_model(self) -> Result<Response<T>>`. `into_body(self)` now returns a `ResponseBody`.
+
+## 0.8.0 (2025-10-07)
+
+### Breaking Changes
+
+- Client methods that return a `Response<T>>` asynchronously buffer the entire model within the internal pipeline, so `into_body()` and other methods on the response are no longer async.
+- Renamed `KeyType::EC` to `KeyType::Ec` to align with guidelines.
+- Renamed `KeyType::RSA` to `KeyType::Rsa` to align with guidelines.
+- Renamed `EncryptionAlgorithm::RSA1_5` to `EncryptionAlgorithm::Rsa1_5` to align with guidelines.
+- Renamed `EncryptionAlgorithm::RsaOAEP256` to `EncryptionAlgorithm::RsaOaep256` to align with guidelines.
+- Renamed several variants in `SignatureAlgorithm` to align with guidelines e.g., `ES256K` to `Es256K`.
+
+## 0.7.0 (2025-09-16)
+
+### Features Added
+
+- Updated to latest version of fixes for the "7.6" specification after TypeSpec migration.
+
+### Breaking Changes
+
+- Moved key version parameters to client method options.
 
 ## 0.6.0 (2025-08-05)
 

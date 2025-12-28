@@ -1,0 +1,17 @@
+[package]
+name = "azure_canary_core"
+version = "0.1.0"
+description = "Canary crate for Azure SDK pipeline testing"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+azure_canary.path = "../azure_canary"
+
+[lints]
+workspace = true

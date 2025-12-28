@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use azure_core::{
     error::ErrorKind,
-    http::{headers::Headers, ClientOptions, HttpClient, RawResponse, Request, TransportOptions},
+    http::{headers::Headers, AsyncRawResponse, ClientOptions, HttpClient, Request, Transport},
 };
 use azure_identity::DeveloperToolsCredential;
 use azure_security_keyvault_secrets::{ResourceExt as _, SecretClient, SecretClientOptions};
@@ -35,12 +35,12 @@ impl Default for Agent {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl HttpClient for Agent {
-    async fn execute_request(&self, request: &Request) -> azure_core::Result<RawResponse> {
+    async fn execute_request(&self, request: &Request) -> azure_core::Result<AsyncRawResponse> {
         let request = into_request(request)?;
         let response = self
             .0
             .run(request)
-            .with_context(ErrorKind::Io, || "failed to send request")?;
+            .with_context_fn(ErrorKind::Io, || "failed to send request")?;
 
         into_response(response)
     }
@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let agent = Arc::new(Agent::default());
     let options = SecretClientOptions {
         client_options: ClientOptions {
-            transport: Some(TransportOptions::new(agent)),
+            transport: Some(Transport::new(agent)),
             ..Default::default()
         },
         ..Default::default()
@@ -81,19 +81,19 @@ fn into_request(request: &Request) -> azure_core::Result<::http::Request<Vec<u8>
         .url()
         .as_str()
         .parse()
-        .with_context(ErrorKind::DataConversion, || "failed to parse url")?;
+        .with_context_fn(ErrorKind::DataConversion, || "failed to parse url")?;
     *req.method_mut() = request
         .method()
         .as_str()
         .parse()
-        .with_context(ErrorKind::DataConversion, || "failed to parse method")?;
+        .with_context_fn(ErrorKind::DataConversion, || "failed to parse method")?;
     let headers = req.headers_mut();
     for (name, value) in request.headers().iter() {
         headers.insert(
             HeaderName::from_bytes(name.as_str().as_bytes())
-                .with_context(ErrorKind::DataConversion, || "failed to parse header name")?,
+                .with_context_fn(ErrorKind::DataConversion, || "failed to parse header name")?,
             HeaderValue::from_bytes(value.as_str().as_bytes())
-                .with_context(ErrorKind::DataConversion, || "failed to parse header value")?,
+                .with_context_fn(ErrorKind::DataConversion, || "failed to parse header value")?,
         );
     }
     let body: Bytes = request.body().into();
@@ -102,7 +102,7 @@ fn into_request(request: &Request) -> azure_core::Result<::http::Request<Vec<u8>
     Ok(req)
 }
 
-fn into_response(response: ::http::Response<ureq::Body>) -> azure_core::Result<RawResponse> {
+fn into_response(response: ::http::Response<ureq::Body>) -> azure_core::Result<AsyncRawResponse> {
     use ::http::response::Parts;
     use azure_core::http::StatusCode;
 
@@ -120,13 +120,13 @@ fn into_response(response: ::http::Response<ureq::Body>) -> azure_core::Result<R
             name.as_str().to_ascii_lowercase(),
             value
                 .to_str()
-                .with_context(ErrorKind::DataConversion, || "failed to parse header value")?
+                .with_context_fn(ErrorKind::DataConversion, || "failed to parse header value")?
                 .to_string(),
         );
     }
     let body: Vec<u8> = body
         .read_to_vec()
-        .with_context(ErrorKind::Io, || "failed to read response body")?;
+        .with_context_fn(ErrorKind::Io, || "failed to read response body")?;
 
-    Ok(RawResponse::from_bytes(status, response_headers, body))
+    Ok(AsyncRawResponse::from_bytes(status, response_headers, body))
 }

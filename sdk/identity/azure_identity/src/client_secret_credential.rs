@@ -1,32 +1,27 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-use crate::{
-    deserialize, EntraIdErrorResponse, EntraIdTokenResponse, TokenCache, TokenCredentialOptions,
-};
+use crate::{authentication_error, get_authority_host, TokenCache};
 use azure_core::credentials::TokenRequestOptions;
-use azure_core::http::StatusCode;
+use azure_core::http::PipelineSendOptions;
 use azure_core::Result;
 use azure_core::{
     credentials::{AccessToken, Secret, TokenCredential},
     error::{ErrorKind, ResultExt},
     http::{
         headers::{self, content_type},
-        Method, Request, Url,
+        ClientOptions, Method, Pipeline, Request, Url,
     },
-    time::{Duration, OffsetDateTime},
     Error,
 };
 use std::{str, sync::Arc};
 use url::form_urlencoded;
 
-const CLIENT_SECRET_CREDENTIAL: &str = "ClientSecretCredential";
-
 /// Options for constructing a new [`ClientSecretCredential`].
 #[derive(Debug, Default)]
 pub struct ClientSecretCredentialOptions {
     /// Options for constructing credentials.
-    pub credential_options: TokenCredentialOptions,
+    pub client_options: ClientOptions,
 }
 
 /// Authenticates an application with a client secret.
@@ -35,11 +30,19 @@ pub struct ClientSecretCredential {
     cache: TokenCache,
     client_id: String,
     endpoint: Url,
-    options: TokenCredentialOptions,
+    pipeline: Pipeline,
     secret: Secret,
 }
 
 impl ClientSecretCredential {
+    /// Create a new instance of a Client Secret Credential.
+    ///
+    /// # Arguments
+    /// - `tenant_id`: The Azure Active Directory tenant (directory) ID of the service principal.
+    /// - `client_id`: The client (application) ID of the service principal.
+    /// - `secret`: The client secret that was generated for the service principal.
+    /// - `options`: Options for configuring the credential. If `None` is provided, default options will be used.
+    ///
     pub fn new(
         tenant_id: &str,
         client_id: String,
@@ -51,19 +54,27 @@ impl ClientSecretCredential {
         crate::validate_not_empty(secret.secret(), "no secret specified")?;
 
         let options = options.unwrap_or_default();
-        let endpoint = options
-            .credential_options
-            .authority_host()?
+        let authority_host = get_authority_host(None, options.client_options.cloud.as_deref())?;
+        let endpoint = authority_host
             .join(&format!("/{tenant_id}/oauth2/v2.0/token"))
-            .with_context(ErrorKind::DataConversion, || {
+            .with_context_fn(ErrorKind::DataConversion, || {
                 format!("tenant_id '{tenant_id}' could not be URL encoded")
             })?;
+
+        let pipeline = Pipeline::new(
+            option_env!("CARGO_PKG_NAME"),
+            option_env!("CARGO_PKG_VERSION"),
+            options.client_options,
+            Vec::default(),
+            Vec::default(),
+            None,
+        );
 
         Ok(Arc::new(Self {
             cache: TokenCache::new(),
             client_id,
             endpoint,
-            options: options.credential_options,
+            pipeline,
             secret,
         }))
     }
@@ -71,7 +82,7 @@ impl ClientSecretCredential {
     async fn get_token_impl(
         &self,
         scopes: &[&str],
-        _: Option<TokenRequestOptions>,
+        options: Option<TokenRequestOptions<'_>>,
     ) -> Result<AccessToken> {
         let mut req = Request::new(self.endpoint.clone(), Method::Post);
         req.insert_header(
@@ -86,31 +97,21 @@ impl ClientSecretCredential {
             .finish();
         req.set_body(body);
 
-        let res = self.options.http_client().execute_request(&req).await?;
+        let options = options.unwrap_or_default();
+        let ctx = options.method_options.context.to_borrowed();
+        let res = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut req,
+                Some(PipelineSendOptions {
+                    skip_checks: true,
+                    ..Default::default()
+                }),
+            )
+            .await?;
 
-        match res.status() {
-            StatusCode::Ok => {
-                let token_response: EntraIdTokenResponse =
-                    deserialize(CLIENT_SECRET_CREDENTIAL, res).await?;
-                Ok(AccessToken::new(
-                    token_response.access_token,
-                    OffsetDateTime::now_utc() + Duration::seconds(token_response.expires_in),
-                ))
-            }
-            _ => {
-                let error_response: EntraIdErrorResponse =
-                    deserialize(CLIENT_SECRET_CREDENTIAL, res).await?;
-                let message = if error_response.error_description.is_empty() {
-                    format!("{} authentication failed.", CLIENT_SECRET_CREDENTIAL)
-                } else {
-                    format!(
-                        "{} authentication failed. {}",
-                        CLIENT_SECRET_CREDENTIAL, error_response.error_description
-                    )
-                };
-                Err(Error::message(ErrorKind::Credential, message))
-            }
-        }
+        crate::handle_entra_response(res)
     }
 }
 
@@ -120,14 +121,18 @@ impl TokenCredential for ClientSecretCredential {
     async fn get_token(
         &self,
         scopes: &[&str],
-        options: Option<TokenRequestOptions>,
+        options: Option<TokenRequestOptions<'_>>,
     ) -> Result<AccessToken> {
         if scopes.is_empty() {
-            return Err(Error::message(ErrorKind::Credential, "no scopes specified"));
+            return Err(Error::with_message(
+                ErrorKind::Credential,
+                "no scopes specified",
+            ));
         }
         self.cache
             .get_token(scopes, options, |s, o| self.get_token_impl(s, o))
             .await
+            .map_err(|err| authentication_error(stringify!(ClientSecretCredential), err))
     }
 }
 
@@ -136,16 +141,16 @@ mod tests {
     use super::*;
     use crate::tests::*;
     use azure_core::{
-        authority_hosts::AZURE_PUBLIC_CLOUD,
-        http::{headers::Headers, RawResponse, StatusCode},
+        http::{headers::Headers, AsyncRawResponse, RawResponse, StatusCode, Transport},
         Bytes, Result,
     };
     use std::vec;
+    use time::OffsetDateTime;
 
     const FAKE_SECRET: &str = "fake secret";
 
-    fn is_valid_request(authority_host: &str, tenant_id: &str) -> impl Fn(&Request) -> Result<()> {
-        let expected_url = format!("{}{}/oauth2/v2.0/token", authority_host, tenant_id);
+    fn is_valid_request(expected_authority: String) -> impl Fn(&Request) -> Result<()> {
+        let expected_url = format!("{}/oauth2/v2.0/token", expected_authority);
         move |req: &Request| {
             assert_eq!(Method::Post, req.method());
             assert_eq!(expected_url, req.url().to_string());
@@ -158,20 +163,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_token_error() {
-        let description = "AADSTS7000215: Invalid client secret.";
-        let sts = MockSts::new(
-            vec![RawResponse::from_bytes(
-                StatusCode::BadRequest,
-                Headers::default(),
-                Bytes::from(format!(
-                    r#"{{"error":"invalid_client","error_description":"{}","error_codes":[7000215],"timestamp":"2025-04-04 21:10:04Z","trace_id":"...","correlation_id":"...","error_uri":"https://login.microsoftonline.com/error?code=7000215"}}"#,
-                    description
-                )),
-            )],
-            Some(Arc::new(is_valid_request(
-                AZURE_PUBLIC_CLOUD.as_str(),
+    async fn cloud_configuration() {
+        for (cloud, expected_authority) in cloud_configuration_cases() {
+            let sts = MockSts::new(
+                vec![token_response()],
+                Some(Arc::new(is_valid_request(expected_authority))),
+            );
+            let credential = ClientSecretCredential::new(
                 FAKE_TENANT_ID,
+                FAKE_CLIENT_ID.to_string(),
+                FAKE_SECRET.into(),
+                Some(ClientSecretCredentialOptions {
+                    client_options: ClientOptions {
+                        transport: Some(Transport::new(Arc::new(sts))),
+                        cloud: Some(Arc::new(cloud)),
+                        ..Default::default()
+                    },
+                }),
+            )
+            .expect("valid credential");
+
+            credential
+                .get_token(LIVE_TEST_SCOPES, None)
+                .await
+                .expect("token");
+        }
+    }
+
+    #[tokio::test]
+    async fn get_token_error() {
+        let body = Bytes::from(
+            r#"{"error":"invalid_client","error_description":"AADSTS7000215: Invalid client secret.","error_codes":[7000215],"timestamp":"2025-04-04 21:10:04Z","trace_id":"...","correlation_id":"...","error_uri":"https://login.microsoftonline.com/error?code=7000215"}"#,
+        );
+        let expected_status = StatusCode::BadRequest;
+        let mut headers = Headers::default();
+        headers.insert("key", "value");
+        let expected_response =
+            RawResponse::from_bytes(expected_status, headers.clone(), body.clone());
+        let sts = MockSts::new(
+            vec![AsyncRawResponse::from_bytes(expected_status, headers, body)],
+            Some(Arc::new(is_valid_request(
+                FAKE_PUBLIC_CLOUD_AUTHORITY.to_string(),
             ))),
         );
         let cred = ClientSecretCredential::new(
@@ -179,8 +211,8 @@ mod tests {
             FAKE_CLIENT_ID.to_string(),
             FAKE_SECRET.into(),
             Some(ClientSecretCredentialOptions {
-                credential_options: TokenCredentialOptions {
-                    http_client: Arc::new(sts),
+                client_options: ClientOptions {
+                    transport: Some(Transport::new(Arc::new(sts))),
                     ..Default::default()
                 },
             }),
@@ -192,28 +224,35 @@ mod tests {
             .await
             .expect_err("expected error");
         assert!(matches!(err.kind(), ErrorKind::Credential));
-        assert!(
-            err.to_string().contains(description),
-            "expected error description from the response, got '{}'",
-            err
+        assert_eq!(
+            "ClientSecretCredential authentication failed. AADSTS7000215: Invalid client secret.\nTo troubleshoot, visit https://aka.ms/azsdk/rust/identity/troubleshoot#client-secret",
+            err.to_string(),
         );
+        match err
+            .downcast_ref::<azure_core::Error>()
+            .expect("returned error should wrap an azure_core::Error")
+            .kind()
+        {
+            ErrorKind::HttpResponse {
+                error_code: Some(error_code),
+                raw_response: Some(response),
+                status,
+            } => {
+                assert_eq!("7000215", error_code);
+                assert_eq!(&expected_response, response.as_ref());
+                assert_eq!(expected_status, *status);
+            }
+            err => panic!("unexpected {:?}", err),
+        };
     }
 
     #[tokio::test]
     async fn get_token_success() {
         let expires_in = 3600;
         let sts = MockSts::new(
-            vec![RawResponse::from_bytes(
-                StatusCode::Ok,
-                Headers::default(),
-                Bytes::from(format!(
-                    r#"{{"access_token":"{}","expires_in":{},"token_type":"Bearer"}}"#,
-                    FAKE_TOKEN, expires_in
-                )),
-            )],
+            vec![token_response()],
             Some(Arc::new(is_valid_request(
-                AZURE_PUBLIC_CLOUD.as_str(),
-                FAKE_TENANT_ID,
+                FAKE_PUBLIC_CLOUD_AUTHORITY.to_string(),
             ))),
         );
         let cred = ClientSecretCredential::new(
@@ -221,8 +260,8 @@ mod tests {
             FAKE_CLIENT_ID.to_string(),
             FAKE_SECRET.into(),
             Some(ClientSecretCredentialOptions {
-                credential_options: TokenCredentialOptions {
-                    http_client: Arc::new(sts),
+                client_options: ClientOptions {
+                    transport: Some(Transport::new(Arc::new(sts))),
                     ..Default::default()
                 },
             }),

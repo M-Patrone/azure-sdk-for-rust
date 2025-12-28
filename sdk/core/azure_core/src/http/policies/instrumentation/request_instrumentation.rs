@@ -86,7 +86,7 @@ impl Policy for RequestInstrumentationPolicy {
         if request.url().username().is_empty() && request.url().password().is_none() {
             span_attributes.push(Attribute {
                 key: URL_FULL_ATTRIBUTE.into(),
-                value: request.url().to_string().into(),
+                value: request.url().into(),
             });
         }
 
@@ -107,7 +107,7 @@ impl Policy for RequestInstrumentationPolicy {
         let span = if let Some(parent_span) = ctx.value::<Arc<dyn Span>>() {
             // If a parent span exists, start a new span with the parent.
             tracer.start_span_with_parent(
-                method_str,
+                method_str.into(),
                 SpanKind::Client,
                 span_attributes,
                 parent_span.clone(),
@@ -115,7 +115,7 @@ impl Policy for RequestInstrumentationPolicy {
         } else {
             // If no parent span exists, start a new span with the "current" span (if any).
             // It is up to the tracer implementation to determine what "current" means.
-            tracer.start_span(method_str, SpanKind::Client, span_attributes)
+            tracer.start_span(method_str.into(), SpanKind::Client, span_attributes)
         };
 
         if span.is_recording() {
@@ -177,11 +177,12 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         http::{
-            headers::Headers, policies::TransportPolicy, Method, RawResponse, StatusCode,
-            TransportOptions,
+            headers::{HeaderName, Headers},
+            policies::TransportPolicy,
+            AsyncRawResponse, Method, StatusCode, Transport,
         },
         tracing::{AttributeValue, SpanStatus, TracerProvider},
-        Result,
+        Result, Uuid,
     };
     use azure_core_test::{
         http::MockHttpClient,
@@ -192,7 +193,6 @@ pub(crate) mod tests {
     };
     use futures::future::BoxFuture;
     use std::sync::Arc;
-    use typespec_client_core::http::headers::HeaderName;
 
     async fn run_instrumentation_test<C>(
         test_namespace: Option<&'static str>,
@@ -202,7 +202,7 @@ pub(crate) mod tests {
         callback: C,
     ) -> Arc<MockTracingProvider>
     where
-        C: FnMut(&Request) -> BoxFuture<'_, Result<RawResponse>> + Send + Sync + 'static,
+        C: FnMut(&Request) -> BoxFuture<'_, Result<AsyncRawResponse>> + Send + Sync + 'static,
     {
         let mock_tracer_provider = Arc::new(MockTracingProvider::new());
         let tracer = mock_tracer_provider.get_tracer(
@@ -212,9 +212,8 @@ pub(crate) mod tests {
         );
         let policy = Arc::new(RequestInstrumentationPolicy::new(Some(tracer.clone())));
 
-        let transport = TransportPolicy::new(TransportOptions::new(Arc::new(MockHttpClient::new(
-            callback,
-        ))));
+        let transport =
+            TransportPolicy::new(Transport::new(Arc::new(MockHttpClient::new(callback))));
 
         let ctx = Context::default();
         let next: Vec<Arc<dyn Policy>> = vec![Arc::new(transport)];
@@ -225,7 +224,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn simple_instrumentation_policy() {
-        let url = "http://example.com/path";
+        let url = "http://example.com/path?query=value&api-version=2024-01-01";
         let mut request = Request::new(url.parse().unwrap(), Method::Get);
 
         let mock_tracer = run_instrumentation_test(
@@ -237,7 +236,7 @@ pub(crate) mod tests {
                 Box::pin(async move {
                     assert_eq!(req.url().host_str(), Some("example.com"));
                     assert_eq!(req.method(), Method::Get);
-                    Ok(RawResponse::from_bytes(
+                    Ok(AsyncRawResponse::from_bytes(
                         StatusCode::Ok,
                         Headers::new(),
                         vec![],
@@ -257,6 +256,8 @@ pub(crate) mod tests {
                     span_name: "GET",
                     status: SpanStatus::Unset,
                     kind: SpanKind::Client,
+                    span_id: Uuid::new_v4(),
+                    parent_id: None,
                     attributes: vec![
                         (
                             AZ_NAMESPACE_ATTRIBUTE,
@@ -274,9 +275,12 @@ pub(crate) mod tests {
                         (SERVER_PORT_ATTRIBUTE, AttributeValue::from(80)),
                         (
                             URL_FULL_ATTRIBUTE,
-                            AttributeValue::from("http://example.com/path"),
+                            AttributeValue::from(
+                                "http://example.com/path?query=value&api-version=2024-01-01",
+                            ),
                         ),
                     ],
+                    ..Default::default()
                 }],
             }],
         );
@@ -320,7 +324,7 @@ pub(crate) mod tests {
                             .get_optional_str(&HeaderName::from_static("traceparent")),
                         Some("00-<trace_id>-<span_id>-01")
                     );
-                    Ok(RawResponse::from_bytes(
+                    Ok(AsyncRawResponse::from_bytes(
                         StatusCode::Ok,
                         Headers::new(),
                         vec![],
@@ -340,6 +344,8 @@ pub(crate) mod tests {
                     span_name: "GET",
                     status: SpanStatus::Unset,
                     kind: SpanKind::Client,
+                    span_id: Uuid::new_v4(),
+                    parent_id: None,
                     attributes: vec![
                         (
                             AZ_CLIENT_REQUEST_ID_ATTRIBUTE,
@@ -360,6 +366,7 @@ pub(crate) mod tests {
                             AttributeValue::from("https://example.com/client_request_id"),
                         ),
                     ],
+                    ..Default::default()
                 }],
             }],
         );
@@ -375,7 +382,7 @@ pub(crate) mod tests {
                 Box::pin(async move {
                     assert_eq!(req.url().host_str(), Some("host"));
                     assert_eq!(req.method(), Method::Get);
-                    Ok(RawResponse::from_bytes(
+                    Ok(AsyncRawResponse::from_bytes(
                         StatusCode::Ok,
                         Headers::new(),
                         vec![],
@@ -394,6 +401,8 @@ pub(crate) mod tests {
                     span_name: "GET",
                     status: SpanStatus::Unset,
                     kind: SpanKind::Client,
+                    span_id: Uuid::new_v4(),
+                    parent_id: None,
                     attributes: vec![
                         (
                             HTTP_RESPONSE_STATUS_CODE_ATTRIBUTE,
@@ -403,6 +412,7 @@ pub(crate) mod tests {
                         (SERVER_ADDRESS_ATTRIBUTE, AttributeValue::from("host")),
                         (SERVER_PORT_ATTRIBUTE, AttributeValue::from(8080)),
                     ],
+                    ..Default::default()
                 }],
             }],
         );
@@ -423,7 +433,7 @@ pub(crate) mod tests {
                 Box::pin(async move {
                     assert_eq!(req.url().host_str(), Some("microsoft.com"));
                     assert_eq!(req.method(), Method::Put);
-                    Ok(RawResponse::from_bytes(
+                    Ok(AsyncRawResponse::from_bytes(
                         StatusCode::NotFound,
                         Headers::new(),
                         vec![],
@@ -445,6 +455,8 @@ pub(crate) mod tests {
                         description: "".to_string(),
                     },
                     kind: SpanKind::Client,
+                    span_id: Uuid::new_v4(),
+                    parent_id: None,
                     attributes: vec![
                         (ERROR_TYPE_ATTRIBUTE, AttributeValue::from("404")),
                         (
@@ -470,6 +482,7 @@ pub(crate) mod tests {
                             AttributeValue::from("https://microsoft.com/request_failed.htm"),
                         ),
                     ],
+                    ..Default::default()
                 }],
             }],
         );

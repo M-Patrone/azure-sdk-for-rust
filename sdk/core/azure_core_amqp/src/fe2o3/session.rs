@@ -3,11 +3,10 @@
 
 use crate::{
     connection::AmqpConnection,
-    error::AmqpErrorKind,
+    error::{AmqpErrorKind, Result},
     session::{AmqpSessionApis, AmqpSessionOptions},
     AmqpError,
 };
-use azure_core::Result;
 use std::{
     borrow::BorrowMut,
     sync::{Arc, OnceLock},
@@ -42,23 +41,14 @@ impl Fe2o3AmqpSession {
             .clone())
     }
 
-    fn session_already_attached() -> azure_core::Error {
-        azure_core::Error::message(
-            azure_core::error::ErrorKind::Amqp,
-            "AMQP Session is already attached",
-        )
+    fn session_already_attached() -> AmqpError {
+        AmqpError::with_message("AMQP Session is already attached")
     }
-    fn session_not_set() -> azure_core::Error {
-        azure_core::Error::message(
-            azure_core::error::ErrorKind::Amqp,
-            "AMQP Session is not set",
-        )
+    fn session_not_set() -> AmqpError {
+        AmqpError::with_message("AMQP Session is not set")
     }
-    fn could_not_set_session() -> azure_core::Error {
-        azure_core::Error::message(
-            azure_core::error::ErrorKind::Amqp,
-            "Could not set AMQP Session",
-        )
+    fn could_not_set_session() -> AmqpError {
+        AmqpError::with_message("Could not set AMQP Session")
     }
 }
 
@@ -81,26 +71,26 @@ impl AmqpSessionApis for Fe2o3AmqpSession {
         let mut session_builder = fe2o3_amqp::session::Session::builder();
 
         if let Some(options) = options {
-            if let Some(incoming_window) = options.incoming_window() {
+            if let Some(incoming_window) = options.incoming_window {
                 session_builder = session_builder.incoming_window(incoming_window);
             }
-            if let Some(outgoing_window) = options.outgoing_window() {
+            if let Some(outgoing_window) = options.outgoing_window {
                 session_builder = session_builder.outgoing_window(outgoing_window);
             }
-            if let Some(handle_max) = options.handle_max() {
+            if let Some(handle_max) = options.handle_max {
                 session_builder = session_builder.handle_max(handle_max);
             }
-            if let Some(offered_capabilities) = options.offered_capabilities() {
+            if let Some(offered_capabilities) = options.offered_capabilities {
                 session_builder = session_builder.set_offered_capabilities(
                     offered_capabilities.iter().map(Into::into).collect(),
                 );
             }
-            if let Some(desired_capabilities) = options.desired_capabilities() {
+            if let Some(desired_capabilities) = options.desired_capabilities {
                 session_builder = session_builder.set_desired_capabilities(
                     desired_capabilities.iter().map(Into::into).collect(),
                 );
             }
-            if let Some(properties) = options.properties() {
+            if let Some(properties) = options.properties {
                 session_builder = session_builder.properties(
                     properties
                         .iter()
@@ -108,14 +98,14 @@ impl AmqpSessionApis for Fe2o3AmqpSession {
                         .collect(),
                 );
             }
-            if let Some(buffer_size) = options.buffer_size() {
+            if let Some(buffer_size) = options.buffer_size {
                 session_builder = session_builder.buffer_size(buffer_size);
             }
         }
         let session = session_builder
             .begin(connection.borrow_mut())
             .await
-            .map_err(|e| azure_core::Error::from(AmqpError::from(e)))?;
+            .map_err(AmqpError::from)?;
         self.session
             .set(Arc::new(Mutex::new(session)))
             .map_err(|_| Self::could_not_set_session())?;
@@ -133,10 +123,7 @@ impl AmqpSessionApis for Fe2o3AmqpSession {
             trace!("Session already ended, returning.");
             return Ok(());
         }
-        session
-            .end()
-            .await
-            .map_err(|e| azure_core::Error::from(AmqpError::from(e)))?;
+        session.end().await.map_err(AmqpError::from)?;
         Ok(())
     }
 }

@@ -1,11 +1,14 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-use crate::{env::Env, TokenCache, TokenCredentialOptions, UserAssignedId};
+use crate::{env::Env, TokenCache, UserAssignedId};
 use azure_core::{
     credentials::{AccessToken, Secret, TokenCredential, TokenRequestOptions},
-    error::{http_response_from_body, Error, ErrorKind},
-    http::{headers::HeaderName, request::Request, HttpClient, Method, StatusCode, Url},
+    error::{Error, ErrorKind},
+    http::{
+        headers::HeaderName, request::Request, ClientOptions, Method, Pipeline, PipelineOptions,
+        PipelineSendOptions, StatusCode, Url,
+    },
     json::from_json,
     time::OffsetDateTime,
 };
@@ -13,7 +16,7 @@ use serde::{
     de::{self, Deserializer},
     Deserialize,
 };
-use std::{str, sync::Arc};
+use std::str;
 
 /// An identifier for the Azure Instance Metadata Service (IMDS).
 ///
@@ -48,7 +51,7 @@ impl From<UserAssignedId> for ImdsId {
 /// Built up from docs at [https://learn.microsoft.com/azure/app-service/overview-managed-identity#using-the-rest-protocol](https://learn.microsoft.com/azure/app-service/overview-managed-identity#using-the-rest-protocol)
 #[derive(Debug)]
 pub(crate) struct ImdsManagedIdentityCredential {
-    http_client: Arc<dyn HttpClient>,
+    pipeline: Pipeline,
     endpoint: Url,
     api_version: String,
     secret_header: HeaderName,
@@ -59,31 +62,41 @@ pub(crate) struct ImdsManagedIdentityCredential {
 }
 
 impl ImdsManagedIdentityCredential {
+    #[allow(clippy::too_many_arguments, reason = "private API")]
     pub fn new(
-        options: impl Into<TokenCredentialOptions>,
         endpoint: Url,
         api_version: &str,
         secret_header: HeaderName,
         secret_env: &str,
         id: ImdsId,
+        client_options: ClientOptions,
+        pipeline_options: Option<PipelineOptions>,
+        env: Env,
     ) -> Self {
-        let options = options.into();
+        let pipeline = Pipeline::new(
+            option_env!("CARGO_PKG_NAME"),
+            option_env!("CARGO_PKG_VERSION"),
+            client_options,
+            Vec::default(),
+            Vec::default(),
+            pipeline_options,
+        );
         Self {
-            http_client: options.http_client(),
+            pipeline,
             endpoint,
             api_version: api_version.to_owned(),
             secret_header: secret_header.to_owned(),
             secret_env: secret_env.to_owned(),
             id,
             cache: TokenCache::new(),
-            env: options.env().clone(),
+            env,
         }
     }
 
     async fn get_token(
         &self,
         scopes: &[&str],
-        _: Option<TokenRequestOptions>,
+        options: Option<TokenRequestOptions<'_>>,
     ) -> azure_core::Result<AccessToken> {
         let resource = scopes_to_resource(scopes)?;
 
@@ -111,32 +124,45 @@ impl ImdsManagedIdentityCredential {
             req.insert_header(self.secret_header.clone(), val);
         };
 
-        let rsp = self.http_client.execute_request(&req).await?;
+        let options = options.unwrap_or_default();
+        let ctx = options.method_options.context.to_borrowed();
+        let rsp = self
+            .pipeline
+            .send(
+                &ctx,
+                &mut req,
+                Some(PipelineSendOptions {
+                    skip_checks: true,
+                    ..Default::default()
+                }),
+            )
+            .await?;
 
-        let (rsp_status, _, rsp_body) = rsp.deconstruct();
-        let rsp_body = rsp_body.collect().await?;
-
-        if !rsp_status.is_success() {
-            match rsp_status {
+        let status = rsp.status();
+        if !status.is_success() {
+            let message = match status {
                 StatusCode::BadRequest => {
-                    return Err(Error::message(
-                        ErrorKind::Credential,
-                        "the requested identity has not been assigned to this resource",
-                    ))
+                    "The requested identity has not been assigned to this resource".to_string()
                 }
                 StatusCode::BadGateway | StatusCode::GatewayTimeout => {
-                    return Err(Error::message(
-                        ErrorKind::Credential,
-                        "the request failed due to a gateway error",
-                    ))
+                    "The request failed due to a gateway error".to_string()
                 }
-                rsp_status => {
-                    return Err(http_response_from_body(rsp_status, &rsp_body).into_error())
+                _ => {
+                    let body = String::from_utf8_lossy(rsp.body());
+                    format!("The request failed: {body}")
                 }
-            }
+            };
+            return Err(Error::new(
+                ErrorKind::HttpResponse {
+                    error_code: None,
+                    raw_response: Some(Box::new(rsp)),
+                    status,
+                },
+                message,
+            ));
         }
 
-        let token_response: MsiTokenResponse = from_json(&rsp_body)?;
+        let token_response: MsiTokenResponse = from_json(rsp.into_body())?;
         Ok(AccessToken::new(
             token_response.access_token,
             token_response.expires_on,
@@ -150,7 +176,7 @@ impl TokenCredential for ImdsManagedIdentityCredential {
     async fn get_token(
         &self,
         scopes: &[&str],
-        options: Option<TokenRequestOptions>,
+        options: Option<TokenRequestOptions<'_>>,
     ) -> azure_core::Result<AccessToken> {
         self.cache
             .get_token(scopes, options, |s, o| self.get_token(s, o))
@@ -173,14 +199,14 @@ where
 /// ref: <https://github.com/Azure/azure-sdk-for-python/blob/d6aeefef46c94b056419613f1a5cc9eaa3af0d22/sdk/identity/azure-identity/azure/identity/_internal/__init__.py#L22>
 fn scopes_to_resource<'a>(scopes: &'a [&'a str]) -> azure_core::Result<&'a str> {
     if scopes.len() != 1 {
-        return Err(Error::message(
+        return Err(Error::with_message(
             ErrorKind::Credential,
             "only one scope is supported for IMDS authentication",
         ));
     }
 
     let Some(scope) = scopes.first() else {
-        return Err(Error::message(
+        return Err(Error::with_message(
             ErrorKind::Credential,
             "no scopes were provided",
         ));
