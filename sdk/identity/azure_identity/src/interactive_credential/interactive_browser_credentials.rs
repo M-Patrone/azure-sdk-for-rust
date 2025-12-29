@@ -1,6 +1,5 @@
 use azure_core::{
     credentials::{AccessToken, TokenCredential, TokenRequestOptions},
-    error::http_response_from_body,
     http::{
         headers::{self, content_type},
         new_http_client, HttpClient, Url,
@@ -21,7 +20,7 @@ use crate::{
     interactive_credential::{
         interactive_credentials_cache::TokenCache, internal_server::open_url,
     },
-    EntraIdTokenResponse, TokenCredentialOptions,
+    EntraIdTokenResponse,
 };
 
 /// Default OAuth scopes used when none are provided.
@@ -201,8 +200,11 @@ async fn req_access_token(
     let rsp_status = rsp.status();
 
     if !rsp_status.is_success() {
-        let rsp_body = rsp.into_body().collect().await?;
-        return Err(http_response_from_body(rsp_status, &rsp_body).into_error());
+        let rsp_body: azure_core::Bytes = rsp.into_body().collect().await?;
+        return Err(Error::with_message(
+            ErrorKind::Credential,
+            format!("{}, {}", rsp_status, String::from_utf8(rsp_body.to_vec())?),
+        ));
     }
 
     let response: EntraIdTokenResponse = rsp.into_body().json().await?;
