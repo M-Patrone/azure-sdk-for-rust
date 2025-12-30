@@ -16,7 +16,7 @@ use tracing::{debug, info};
 use url::form_urlencoded;
 
 use crate::{
-    cache,
+    cache, handle_entra_response,
     interactive_credential::{
         interactive_credentials_cache::TokenCache, internal_server::open_url,
     },
@@ -206,12 +206,8 @@ async fn req_access_token(
             format!("{}, {}", rsp_status, String::from_utf8(rsp_body.to_vec())?),
         ));
     }
-
-    let response: EntraIdTokenResponse = rsp.into_body().json().await?;
-    Ok(AccessToken::new(
-        response.access_token,
-        OffsetDateTime::now_utc() + Duration::seconds(response.expires_in),
-    ))
+    let response = handle_entra_response(rsp.try_into_raw_response().await?);
+    response
 }
 ///check if there at least the default scopes included
 fn ensure_default_scopes<'a>(scopes: &'a [&'a str]) -> Vec<&'a str> {
