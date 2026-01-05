@@ -226,7 +226,7 @@ impl<'a> TokenCredential for InteractiveBrowserCredential<'a> {
     async fn get_token(
         &self,
         scopes: &[&str],
-        options: Option<TokenRequestOptions>,
+        _options: Option<TokenRequestOptions<'_>>,
     ) -> crate::Result<AccessToken> {
         println!("GETTING TOOOOOOOOKEN");
 
