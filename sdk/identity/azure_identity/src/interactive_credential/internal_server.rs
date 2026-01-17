@@ -1,19 +1,35 @@
 use base64::engine::general_purpose;
 use base64::Engine;
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{debug, error};
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-///The port where the local server is listening on the auth_code
-#[allow(dead_code)]
-pub const LOCAL_SERVER_PORT: u16 = 53298;
+
+use crate::LOCAL_SERVER_PORT;
+//parameter name to extract the information in response of the authorization flow
+const UNIQUE_TENANT_IDENTIFIER: &str = "utid";
+const UNIQUE_OBJECT_IDENTIFIER: &str = "uid";
+const SUBJECT_CLAIMS: &str = "sub";
+const CODE: &str = "code";
+const CLIENT_INFO: &str = "client_info";
+
 ///saves the id_token most important claim to enable caching and also to check the `nonce`
 #[derive(Debug)]
 pub struct HybridAuthContext {
     pub auth_code: String,
     pub oid: String,
     pub tid: String,
+}
+
+impl HybridAuthContext {
+    fn new(auth_code: String, oid: String, tid: String) -> HybridAuthContext {
+        HybridAuthContext {
+            auth_code: auth_code.to_string(),
+            oid: oid.to_string(),
+            tid: tid.to_string(),
+        }
+    }
 }
 /// Opens the given URL in the default system browser and starts a local web server
 /// to receive the authorization code.
@@ -23,7 +39,7 @@ pub async fn open_url(url: &str) -> Option<HybridAuthContext> {
     use crate::process::{new_executor, Executor};
     use std::{ffi::OsStr, sync::Arc};
 
-    info!("only authorize url: {}", url.clone());
+    debug!("only authorize url: {}", url);
 
     let executor: Arc<dyn Executor> = new_executor();
     if let Some(command) = find_linux_browser_command().await {
@@ -151,16 +167,16 @@ fn handle_browser_command() -> Option<HybridAuthContext> {
 #[allow(dead_code)]
 /// Starts a simple HTTP server on localhost to receive the auth code.
 fn start_webserver() -> Option<HybridAuthContext> {
-    info!("starting webserver");
+    debug!("starting webserver");
     let res = TcpListener::bind(("127.0.0.1", LOCAL_SERVER_PORT))
         .ok()
         .and_then(handle_tcp_connection);
-    info!("ending webserver, {:#?}", res);
+    debug!("ending webserver, {:#?}", res);
     res
 }
 
 fn handle_tcp_connection(listener: TcpListener) -> Option<HybridAuthContext> {
-    info!("HANDLING TCP CONNECTION");
+    debug!("HANDLING TCP CONNECTION");
     listener
         .incoming()
         .take(1)
@@ -174,12 +190,12 @@ fn handle_tcp_connection(listener: TcpListener) -> Option<HybridAuthContext> {
 /// Returns also the html code to show if it worked
 #[allow(dead_code)]
 fn handle_client(mut stream: TcpStream) -> Option<HybridAuthContext> {
-    info!("HANDLING CLIENT");
+    debug!("HANDLING CLIENT");
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .ok()?;
 
-    info!("after stream opening");
+    debug!("after stream opening");
 
     let mut buf_reader = BufReader::new(&stream);
     let mut headers = String::new();
@@ -190,7 +206,7 @@ fn handle_client(mut stream: TcpStream) -> Option<HybridAuthContext> {
         let mut line = String::new();
         let bytes_read = buf_reader.read_line(&mut line).ok()?;
         if bytes_read == 0 {
-            info!("Connection closed by client.");
+            debug!("Connection closed by client.");
             break;
         }
 
@@ -210,12 +226,10 @@ fn handle_client(mut stream: TcpStream) -> Option<HybridAuthContext> {
     buf_reader.read_exact(&mut body).ok()?;
     let body_str = String::from_utf8_lossy(&body);
 
-    info!("Full request headers:\n{}", headers);
-    info!("Full request body:\n{}", body_str);
+    debug!("Full request headers:\n{}", headers);
+    debug!("Full request body:\n{}", body_str);
 
     let res_auth = extract_auth_information(&body_str);
-
-    //let code = extract_auth_code(&body_str);
 
     let response_body = r#"<!DOCTYPE html>
 <html><head><title>Auth Complete</title></head>
@@ -233,10 +247,6 @@ fn handle_client(mut stream: TcpStream) -> Option<HybridAuthContext> {
     stream.shutdown(Shutdown::Both).ok()?;
 
     res_auth
-    //
-    //Some(HybridAuthContext {
-    //    auth_code: code.unwrap_or(String::from("NO VALUE")),
-    //})
 }
 ///method to decode the `id_token`
 ///
@@ -250,7 +260,7 @@ fn decode_id_token(id_token_encoded: &str, search_property: &str) -> Option<Stri
     let id_token_json: serde_json::Value = serde_json::from_slice(&id_token_decoded).ok()?;
 
     let id_token_decoded_val = id_token_json[search_property].as_str();
-    info!(
+    debug!(
         "searched value {} with value {:#?}",
         &search_property, id_token_decoded_val
     );
@@ -258,41 +268,30 @@ fn decode_id_token(id_token_encoded: &str, search_property: &str) -> Option<Stri
     id_token_decoded_val.map(|s| s.to_string())
 }
 
-/// Extracts the `code` query parameter from the request.
-#[allow(dead_code)]
-fn extract_auth_code(request: &str) -> Option<String> {
-    info!("output full request: {:#?}", request);
-    let code_start = request.rfind("code=")? + 5;
-    let rest = &request[code_start..];
-    let end = rest.find('&').unwrap_or(rest.len());
-    Some(rest[..end].to_string())
-}
-
+/// method to extract the auth information which is returend.
+/// Extracts the auth code from the body which is return and the repsonse from the auth call is in
+/// url decoded.
 fn extract_auth_information(body_str: &str) -> Option<HybridAuthContext> {
     let parsed: std::collections::HashMap<_, _> = url::form_urlencoded::parse(body_str.as_bytes())
         .into_owned()
         .collect();
 
-    let code = parsed.get("code").cloned();
-    let id_token = parsed.get("client_info").cloned();
+    //extract the authorization code (see https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#request-an-authorization-code)
+    let code = parsed.get(CODE).cloned();
+    let id_token = parsed.get(CLIENT_INFO).cloned();
 
     let auth_context: Option<HybridAuthContext> = match (code, id_token) {
         (Some(auth_code), Some(id_token)) => {
-            let oid_sub =
-                decode_id_token(&id_token, "uid").or_else(|| decode_id_token(&id_token, "sub"));
-            let tid = decode_id_token(&id_token, "utid");
+            let oid_sub = decode_id_token(&id_token, UNIQUE_OBJECT_IDENTIFIER)
+                .or_else(|| decode_id_token(&id_token, SUBJECT_CLAIMS));
+            let tid = decode_id_token(&id_token, UNIQUE_TENANT_IDENTIFIER);
             match (oid_sub, tid) {
-                (Some(oid_sub), Some(tid)) => Some(HybridAuthContext {
-                    oid: oid_sub,
-                    tid,
-                    auth_code,
-                }),
+                (Some(oid_sub), Some(tid)) => Some(HybridAuthContext::new(auth_code, oid_sub, tid)),
                 _ => None,
             }
         }
         _ => None,
     };
-
-    info!("HybridAuthContext information: {:#?}", auth_context);
+    debug!("HybridAuthContext information: {:#?}", auth_context);
     auth_context
 }

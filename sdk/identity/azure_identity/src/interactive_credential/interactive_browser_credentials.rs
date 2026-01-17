@@ -9,19 +9,19 @@ use azure_core::{
 use azure_core::{
     error::ErrorKind,
     http::{Method, Request},
-    time::{Duration, OffsetDateTime},
 };
-use std::{collections::HashSet, str::FromStr, sync::Arc, u16};
-use tracing::{debug, info};
+use std::{collections::HashSet, str::FromStr, sync::Arc};
+use tracing::debug;
 use url::form_urlencoded;
 
 use crate::{
-    cache, handle_entra_response,
+    handle_entra_response,
     interactive_credential::{
         interactive_credentials_cache::TokenCache, internal_server::open_url,
     },
-    EntraIdTokenResponse,
 };
+
+use super::LOCAL_SERVER_PORT;
 
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
@@ -35,8 +35,7 @@ const DEFAULT_DEVELOPER_SIGNON_CLIENT_ID: &str = "04b07795-8ddb-461a-bbee-02f9e1
 #[allow(dead_code)]
 const DEFAULT_ORGANIZATIONS_TENANT_ID: &str = "organizations";
 
-const LOCAL_SERVER_PORT: u16 = 53298;
-
+///helper struct to save the options for the interactive browser credential flow
 #[derive(Debug)]
 pub struct InteractiveBrowserCredential {
     /// Client ID of the application.
@@ -46,7 +45,8 @@ pub struct InteractiveBrowserCredential {
     /// Redirect URI where the authentication response is sent.
     pub redirect_url: Url,
 
-    pub cache: TokenCache,
+    /// saves the custom implementation for the cache for the interactive flow
+    cache: TokenCache,
     local_http_client: Arc<dyn HttpClient>,
 }
 
@@ -79,8 +79,11 @@ impl InteractiveBrowserCredential {
         })
     }
 
+    /// method which handles the logic implementation of the interactive flow
+    /// starts firstly the internal server to get the auth code and then continues to get the
+    /// access token.
     pub async fn get_token_impl(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
-        info!("starting method");
+        debug!("starting method");
 
         let url = self.authorize(scopes);
         match url {
@@ -93,10 +96,7 @@ impl InteractiveBrowserCredential {
                 self.req_access_token(scopes, &option_hybrid_auth_context.auth_code)
                     .await
             }
-            Err(e) => {
-                debug!("Error on authorize");
-                Err(Error::new(ErrorKind::Other, e))
-            }
+            Err(e) => Err(Error::new(ErrorKind::Other, e)),
         }
     }
 
@@ -137,7 +137,7 @@ impl InteractiveBrowserCredential {
             encoded.finish()
         };
 
-        info!("token request: {:#?}", &encoded);
+        debug!("token request: {:#?}", &encoded);
         req.set_body(encoded);
         let rsp = self.local_http_client.execute_request(&req).await?;
         let rsp_status = rsp.status();
@@ -186,6 +186,7 @@ fn ensure_default_scopes<'a>(scopes: &'a [&'a str]) -> Vec<&'a str> {
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl TokenCredential for InteractiveBrowserCredential {
+    /// method which is exposed to get the access token
     async fn get_token(
         &self,
         scopes: &[&str],
@@ -195,6 +196,11 @@ impl TokenCredential for InteractiveBrowserCredential {
 
         let verified_scopes = ensure_default_scopes(scopes);
 
+        //TODO: this is false should be set by the hybrid_auth_context
+        //need reworks. does not work idTokencache is unimplemented!()
+        //problem is that we get the oid and the tid only in access code so we have to reset the
+        //token cache --> we need to check if the cache has no idTokencache or an invalid without
+        //any oid and tid
         let oid = &self.client_id;
         let tid = &self.tenant_id;
         let token = self
@@ -236,6 +242,6 @@ mod tests {
 
         let response = credential_options.get_token(&DEFAULT_SCOPE_ARR, None).await;
 
-        info!("after request {:#?}", response);
+        debug!("after request {:#?}", response);
     }
 }
