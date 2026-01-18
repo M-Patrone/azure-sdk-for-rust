@@ -1,12 +1,19 @@
 use async_lock::RwLock;
 use azure_core::credentials::AccessToken;
 use azure_core::time::{Duration, OffsetDateTime};
+use std::error::Error;
 use std::{
     collections::HashMap,
     future::Future,
     hash::{Hash, Hasher},
 };
 use tracing::trace;
+
+#[derive(Debug, PartialEq)]
+enum IdTokenCacheCreateState {
+    Empty,
+    Usable,
+}
 
 #[derive(Debug)]
 pub struct IdTokenCache {
@@ -49,7 +56,7 @@ impl Hash for IdTokenCache {
 impl Eq for IdTokenCache {}
 
 impl IdTokenCache {
-    pub fn new(oid: String, tid: String, scopes: Vec<String>) -> Self {
+    fn new(oid: String, tid: String, scopes: Vec<String>) -> Self {
         IdTokenCache { oid, tid, scopes }
     }
 }
@@ -70,10 +77,10 @@ impl TokenCache {
     }
 
     pub async fn get_token(
-        &self,
+        &mut self,
         scopes: &[&str],
-        oid: String,
-        tid: String,
+        oid_auth: String,
+        tid_auth: String,
         callback: impl Future<Output = azure_core::Result<AccessToken>>,
     ) -> azure_core::Result<AccessToken> {
         println!("GET THE TOKEN FROM CACHE");
@@ -82,7 +89,7 @@ impl TokenCache {
         let token_cache = self.0.read().await;
         let scopes = scopes.iter().map(ToString::to_string).collect::<Vec<_>>();
 
-        let id_token_cache = IdTokenCache::new(oid.clone(), tid.clone(), scopes.clone());
+        let id_token_cache = IdTokenCache::new(oid_auth.clone(), tid_auth.clone(), scopes.clone());
 
         if let Some(token) = token_cache.get(&id_token_cache) {
             if !should_refresh(token) {
@@ -106,7 +113,8 @@ impl TokenCache {
 
         trace!("falling back to callback");
         let token = callback.await?;
-        let new_id_token_cache = IdTokenCache::new(oid.clone(), tid.clone(), scopes.clone());
+        let new_id_token_cache =
+            IdTokenCache::new(oid_auth.clone(), tid_auth.clone(), scopes.clone());
 
         // NOTE: we do not check to see if the token is expired here, as at
         // least one credential, `AzureCliCredential`, specifies the token is
@@ -119,8 +127,14 @@ impl TokenCache {
 fn should_refresh(token: &AccessToken) -> bool {
     token.expires_on <= OffsetDateTime::now_utc() + Duration::seconds(300)
 }
-impl Default for TokenCache {
+
+impl Default for IdTokenCache {
     fn default() -> Self {
-        TokenCache::new()
+        Self {
+            oid: String::new(),
+            tid: String::new(),
+            scopes: Vec::new(),
+            create_state: IdTokenCacheCreateState::Empty,
+        }
     }
 }

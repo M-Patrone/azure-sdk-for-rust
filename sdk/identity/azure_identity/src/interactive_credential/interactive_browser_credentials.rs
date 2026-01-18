@@ -21,7 +21,7 @@ use crate::{
     },
 };
 
-use super::LOCAL_SERVER_PORT;
+use super::{interactive_credentials_cache::IdTokenCache, LOCAL_SERVER_PORT};
 
 /// Default OAuth scopes used when none are provided.
 #[allow(dead_code)]
@@ -45,6 +45,8 @@ pub struct InteractiveBrowserCredential {
     /// Redirect URI where the authentication response is sent.
     pub redirect_url: Url,
 
+    oid: String,
+    tid: String,
     /// saves the custom implementation for the cache for the interactive flow
     cache: TokenCache,
     local_http_client: Arc<dyn HttpClient>,
@@ -76,13 +78,15 @@ impl InteractiveBrowserCredential {
             redirect_url,
             local_http_client: new_http_client(),
             cache: TokenCache::new(),
+            oid: String::new(),
+            tid: String::new(),
         })
     }
 
     /// method which handles the logic implementation of the interactive flow
     /// starts firstly the internal server to get the auth code and then continues to get the
     /// access token.
-    pub async fn get_token_impl(&self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
+    pub async fn get_token_impl(&mut self, scopes: &[&str]) -> azure_core::Result<AccessToken> {
         debug!("starting method");
 
         let url = self.authorize(scopes);
@@ -93,6 +97,8 @@ impl InteractiveBrowserCredential {
                     .await
                     .expect("Could not get auth context");
 
+                self.oid = option_hybrid_auth_context.oid;
+                self.tid = option_hybrid_auth_context.tid;
                 self.req_access_token(scopes, &option_hybrid_auth_context.auth_code)
                     .await
             }
@@ -183,12 +189,15 @@ fn ensure_default_scopes<'a>(scopes: &'a [&'a str]) -> Vec<&'a str> {
     }
     result
 }
+
+//TODO: find a way to use it without to mody TokenCredential to take a mutable reference
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl TokenCredential for InteractiveBrowserCredential {
+    //impl InteractiveBrowserCredential {
     /// method which is exposed to get the access token
     async fn get_token(
-        &self,
+        &mut self,
         scopes: &[&str],
         _options: Option<TokenRequestOptions<'_>>,
     ) -> crate::Result<AccessToken> {
@@ -201,8 +210,8 @@ impl TokenCredential for InteractiveBrowserCredential {
         //problem is that we get the oid and the tid only in access code so we have to reset the
         //token cache --> we need to check if the cache has no idTokencache or an invalid without
         //any oid and tid
-        let oid = &self.client_id;
-        let tid = &self.tenant_id;
+        let oid = &self.oid;
+        let tid = &self.tid;
         let token = self
             .cache
             .get_token(
